@@ -1,0 +1,47 @@
+{
+  "entities": {
+    "OvertimeLog": {
+      "title": "OvertimeLog",
+      "description": "Represents an individual overtime log entry recorded by the user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the log" },
+        "date": { "type": "string", "format": "date", "description": "Date of the overtime" },
+        "startTime": { "type": "string", "description": "Start time in HH:MM format" },
+        "endTime": { "type": "string", "description": "End time in HH:MM format" },
+        "durationHours": { "type": "number", "description": "Calculated decimal duration in hours" },
+        "activity": { "type": "string", "description": "Description of the task performed" },
+        "category": { "type": "string", "description": "Category of work e.g. Penetrant Test, etc" },
+        "plant": { "type": "string", "description": "Plant designation" },
+        "subPlant": { "type": "string", "description": "Sub-plant identifier" },
+        "isTimerLog": { "type": "boolean", "description": "Whether log was created with stopwatch" },
+        "notes": { "type": "string", "description": "Additional user comments" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "date", "startTime", "endTime", "durationHours", "activity", "createdAt"]
+    },
+    "OvertimeSettings": {
+      "title": "OvertimeSettings",
+      "description": "Customizable user parameters for overtime calculation and division settings",
+      "type": "object",
+      "properties": {
+        "hourlyRate": { "type": "number", "description": "Earnings per hour in Rupiah" },
+        "monthlyTargetHours": { "type": "number", "description": "Target overtime hours per month" },
+        "employeeName": { "type": "string", "description": "Display name of the employee" },
+        "department": { "type": "string", "description": "Work department or division" },
+        "overtimeType": { "type": "string", "enum": ["hidup", "mati"], "description": "Type of multiplier calculation" }
+      },
+      "required": ["hourlyRate", "monthlyTargetHours", "employeeName", "department", "overtimeType"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/settings/config": {
+      "schema": "OvertimeSettings",
+      "description": "User specific multiplier configuration and settings"
+    },
+    "/users/{userId}/logs/{logId}": {
+      "schema": "OvertimeLog",
+      "description": "Record of a user's logged overtime hours and activities"
+    }
+  }
+}
