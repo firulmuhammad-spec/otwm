@@ -64,6 +64,18 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [showSplash, setShowSplash] = useState(true);
+  const [bypassedLogin, setBypassedLogin] = useState(false);
+
+  // Auto dismiss brand splash screen once auth finishes loading
+  useEffect(() => {
+    if (!isAuthLoading) {
+      const timer = setTimeout(() => {
+        setShowSplash(false);
+      }, 1500); // 1.5 seconds beauty delay for branding logo
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthLoading]);
 
   // Tab/view selections: "input" (Timer & AI parser) or "analytics" (History & Analytics)
   const [activeTab, setActiveTab] = useState<"input" | "stats">("input");
@@ -262,12 +274,29 @@ export default function App() {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       console.error("Manual Sign-in Popup Error:", err);
-      setAuthError(
-        "Gagal menyambungkan ke Google. " +
-        (err?.message?.includes("popup-closed-by-user") 
-          ? "Popup ditutup sebelum selesai." 
-          : "Pastikan browser mengizinkan popup atau buka aplikasi di tab baru.")
-      );
+      
+      const currentDomain = window.location.hostname;
+      if (err?.code === "auth/unauthorized-domain" || err?.message?.includes("unauthorized-domain")) {
+        setAuthError(
+          `Domain belum diotorisasi di Google Firebase Console Anda!\n\n` +
+          `👉 LANGKAH SOLUSI INSTAN:\n` +
+          `1. Buka Firebase Console Anda di: https://console.firebase.google.com/\n` +
+          `2. Masuk ke proyek "${auth.app.options.projectId || "otwm-872e0"}"\n` +
+          `3. Buka menu samping Build > Authentication > klik tab Settings > pilih sub-menu "Authorized domains" (Domain terotorisasi)\n` +
+          `4. Klik tombol "Add domain" (Tambah domain) dan masukkan domain berikut:\n` +
+          `   • ${currentDomain}\n` +
+          `   • (Masukkan juga domain Netlify Anda nanti agar bisa login dari Netlify!)\n` +
+          `5. Klik "Add" untuk menyimpan, tunggu 1-2 menit agar Google menyinkronkan perubahan, kemudian silakan segarkan (refresh) halaman ini dan coba hubungkan lagi!`
+        );
+      } else if (err?.message?.includes("popup-closed-by-user") || err?.code?.includes("popup-closed-by-user")) {
+        setAuthError("Sesi masuk dibatalkan. Jendela popup ditutup oleh pengguna sebelum proses masuk selesai.");
+      } else {
+        setAuthError(
+          `Gagal menyambungkan ke Google.\n` +
+          `Pesan Error: ${err?.message || "Kesalahan tidak dikenal."}\n\n` +
+          `Tips: Pastikan koneksi internet stabil dan pop-up tidak diblokir oleh browser.`
+        );
+      }
     }
   };
 
@@ -306,8 +335,197 @@ export default function App() {
     setIsQuickFormOpen(true);
   };
 
+  // 1. Splash Screen Gate
+  if (showSplash) {
+    return (
+      <div className="min-h-screen bg-[#04060b] flex flex-col items-center justify-center text-slate-100 font-sans select-none relative overflow-hidden">
+        {/* Ambient background glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[350px] h-[350px] bg-indigo-500/10 rounded-full blur-[80px] pointer-events-none"></div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200px] h-[200px] bg-indigo-500/15 rounded-full blur-[60px] pointer-events-none"></div>
+
+        <div className="flex flex-col items-center max-w-sm px-6 text-center z-10 space-y-6">
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
+            className="relative"
+          >
+            <div className="absolute -inset-1 rounded-3xl bg-gradient-to-tr from-indigo-500 to-emerald-500 blur-md opacity-30 animate-pulse duration-1000"></div>
+            <img 
+              src="/icon-512.png" 
+              alt="OTW Logo" 
+              className="relative w-28 h-28 rounded-3xl shadow-2xl border border-indigo-500/20 object-cover"
+              referrerPolicy="no-referrer"
+            />
+          </motion.div>
+
+          <div className="space-y-2">
+            <motion.h1
+              initial={{ y: 10, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.2, duration: 0.6 }}
+              className="text-4xl font-extrabold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-slate-100 via-indigo-200 to-emerald-100"
+            >
+              OTW
+            </motion.h1>
+            <motion.p
+              initial={{ y: 10, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.3, duration: 0.6 }}
+              className="text-xs font-semibold tracking-widest text-indigo-400 uppercase font-mono"
+            >
+              Overtime Work Management
+            </motion.p>
+          </div>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5, duration: 0.5 }}
+            className="flex flex-col items-center gap-1.5 pt-8"
+          >
+            <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+            <span className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">
+              {isAuthLoading ? "Menghubungkan secure cloud..." : "Mengunduh sesi kerja..."}
+            </span>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Welcome & Google Cloud Database Authentication Gate
+  if (!user && !bypassedLogin) {
+    return (
+      <div className="min-h-screen bg-[#04060b] flex flex-col justify-center items-center text-slate-100 font-sans relative px-4 overflow-hidden py-12">
+        {/* Background Mesh Gradients */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-tr from-indigo-500/5 to-purple-500/5 rounded-full blur-[140px] pointer-events-none -z-10"></div>
+        <div className="absolute -top-40 -left-40 w-[300px] h-[300px] bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none -z-10"></div>
+
+        <div className="w-full max-w-lg space-y-8 relative z-10">
+          
+          {/* Logo and Greeting Header */}
+          <div className="flex flex-col items-center text-center space-y-4">
+            <div className="relative">
+              <div className="absolute -inset-1 rounded-3xl bg-gradient-to-tr from-indigo-500 to-emerald-500 blur-md opacity-25 animate-pulse"></div>
+              <img 
+                src="/icon-512.png" 
+                alt="OTW Logo" 
+                className="relative w-20 h-20 rounded-3xl border border-indigo-500/10 shadow-xl object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            
+            <div className="space-y-1">
+              <span className="text-3xl font-black tracking-tight text-white flex items-center justify-center gap-1.5">
+                OTW <span className="text-[10px] font-mono text-indigo-400 font-black tracking-widest bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/20">SYSTEM</span>
+              </span>
+              <p className="text-xs font-semibold uppercase tracking-wider text-indigo-400 font-mono">
+                Over Time Work - management system
+              </p>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto mt-2 text-center leading-relaxed">
+                Platform pencatatan jam lembur terintegrasi Google Cloud & Smart AI Parsing untuk kenyamanan kerja nyata.
+              </p>
+            </div>
+          </div>
+
+          {/* Central Welcome Card */}
+          <div className="backdrop-blur-2xl bg-white/5 border border-white/10 rounded-2xl p-6 sm:p-8 space-y-6 shadow-2xl relative">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none"></div>
+
+            {/* Core Features list */}
+            <div className="space-y-4">
+              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-widest font-mono text-center border-b border-white/5 pb-2">
+                ⚡ FITUR UTAMA OTW
+              </h4>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                <div className="flex gap-2.5 items-start">
+                  <div className="p-1.5 bg-indigo-500/15 text-indigo-300 rounded-lg shrink-0 mt-0.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                  </div>
+                  <div>
+                    <strong className="text-xs font-bold text-slate-200">Asisten AI Pintar</strong>
+                    <p className="text-[10px] text-slate-400 leading-normal mt-0.5">Ketik bebas laporan harian, AI hitung jam & ketekunan otomatis.</p>
+                  </div>
+                </div>
+                
+                <div className="flex gap-2.5 items-start">
+                  <div className="p-1.5 bg-indigo-500/15 text-indigo-300 rounded-lg shrink-0 mt-0.5">
+                    <Clock className="w-3.5 h-3.5 text-indigo-400" />
+                  </div>
+                  <div>
+                    <strong className="text-xs font-bold text-slate-200">Timer StopWatch Instan</strong>
+                    <p className="text-[10px] text-slate-400 leading-normal mt-0.5">Nyalakan stopwatch lembur sekali sentuh untuk ketelitian rill.</p>
+                  </div>
+                </div>
+                
+                <div className="flex gap-2.5 items-start">
+                  <div className="p-1.5 bg-indigo-500/15 text-indigo-300 rounded-lg shrink-0 mt-0.5">
+                    <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                  </div>
+                  <div>
+                    <strong className="text-xs font-bold text-slate-200">Visualisasi Heatmap</strong>
+                    <p className="text-[10px] text-slate-400 leading-normal mt-0.5">Kalender kontribusi warna interaktif untuk konsistensi kerja Anda.</p>
+                  </div>
+                </div>
+                
+                <div className="flex gap-2.5 items-start">
+                  <div className="p-1.5 bg-indigo-500/15 text-indigo-300 rounded-lg shrink-0 mt-0.5">
+                    <TrendingUp className="w-3.5 h-3.5 text-indigo-400" />
+                  </div>
+                  <div>
+                    <strong className="text-xs font-bold text-slate-200">Rincian & Gaji Bulanan</strong>
+                    <p className="text-[10px] text-slate-400 leading-normal mt-0.5">Skema multiplier (Hidup/Mati) & target jam kerja terkalibrasi.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sign in and offline paths */}
+            <div className="space-y-4 pt-4 border-t border-white/5">
+              
+              {authError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-300 text-xs p-4 rounded-xl flex items-start gap-2.5 whitespace-pre-line leading-relaxed text-left w-full shadow-lg">
+                  <div className="shrink-0 mt-0.5">⚠️</div>
+                  <div className="flex-1">{authError}</div>
+                </div>
+              )}
+
+              <button
+                onClick={handleSignInGoogle}
+                className="w-full py-3.5 px-4 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2.5 transition-all shadow-lg shadow-indigo-600/20 cursor-pointer text-center"
+              >
+                <Cloud className="w-4 h-4 animate-bounce" />
+                Sambungkan Database Google (Firestore)
+              </button>
+
+              <div className="flex items-center justify-center gap-2">
+                <span className="h-px bg-white/10 flex-1"></span>
+                <span className="text-[9px] text-slate-500 font-mono uppercase tracking-widest">ATAU</span>
+                <span className="h-px bg-white/10 flex-1"></span>
+              </div>
+
+              <button
+                onClick={() => setBypassedLogin(true)}
+                className="w-full py-2.5 px-4 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white font-semibold text-xs border border-white/10 hover:border-white/15 rounded-xl transition-all cursor-pointer text-center"
+              >
+                Lanjutkan Offline (Mode Simulasi Lokal)
+              </button>
+            </div>
+          </div>
+
+          {/* Secure Firebase Status */}
+          <div className="text-center text-[10px] text-slate-500 font-mono tracking-wide">
+            Powered by Google Cloud Firebase Secure Storage Node
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#0f172a] text-slate-100 font-sans antialiased selection:bg-indigo-500/30 selection:text-indigo-300 pb-20 relative">
+    <div className="min-h-screen bg-[#04060b] text-slate-100 font-sans antialiased selection:bg-indigo-500/30 selection:text-indigo-300 pb-20 relative">
       {/* Background Mesh Gradients */}
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600/30 rounded-full blur-[120px] pointer-events-none -z-10"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[120px] pointer-events-none -z-10"></div>
@@ -315,17 +533,21 @@ export default function App() {
       {/* Navigation Header */}
       <header className="border-b border-white/10 bg-[#0f172a]/40 backdrop-blur-xl sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-500 p-[2px] shadow-lg shadow-indigo-500/25">
-              <div className="h-full w-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                <Clock className="w-5 h-5 text-indigo-300" />
-              </div>
+          <div className="flex items-center gap-2.5">
+            <div className="relative">
+              <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-tr from-indigo-500 to-emerald-500 blur-sm opacity-25"></div>
+              <img 
+                src="/icon-192.png" 
+                alt="OTW Logo" 
+                className="relative w-9 h-9 rounded-xl border border-indigo-500/10 object-cover shadow-md shadow-indigo-500/10"
+                referrerPolicy="no-referrer"
+              />
             </div>
             <div>
-              <span className="text-sm font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 to-purple-300">
-                CatatLembur
+              <span className="text-base font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 via-white to-emerald-300">
+                OTW
               </span>
-              <p className="text-[10px] font-mono text-slate-400 mt-0.5 uppercase tracking-widest font-bold">Smart Logging Engine</p>
+              <p className="text-[9px] font-mono text-slate-400 mt-0.5 uppercase tracking-wider font-extrabold">OVERTIME WORK MANAGEMENT</p>
             </div>
           </div>
 
@@ -440,11 +662,14 @@ export default function App() {
 
         {/* Auth Error Toast/Banner */}
         {authError && (
-          <div className="bg-red-500/10 border border-red-500/25 text-red-300 text-xs font-semibold px-4 py-3 rounded-2xl flex items-center justify-between gap-3 animate-pulse duration-500 shadow-md">
-            <span>⚠️ {authError}</span>
+          <div className="bg-red-500/10 border border-red-500/25 text-red-300 text-xs font-medium px-5 py-4 rounded-2xl flex items-start justify-between gap-4 shadow-md whitespace-pre-line leading-relaxed">
+            <div className="flex gap-2.5">
+              <span className="shrink-0">⚠️</span>
+              <span>{authError}</span>
+            </div>
             <button 
               onClick={() => setAuthError(null)} 
-              className="text-red-400 hover:text-white font-mono px-2 py-0.5 bg-red-500/15 rounded-md cursor-pointer text-[10px]"
+              className="text-red-400 hover:text-white font-mono px-2 py-0.5 bg-red-500/15 rounded-md cursor-pointer text-[10px] shrink-0"
             >
               ✕
             </button>
@@ -704,7 +929,7 @@ export default function App() {
 
       {/* Footer footer information credit line */}
       <footer className="mt-24 border-t border-white/5 py-8 text-center text-[10px] text-slate-500 font-sans tracking-wide space-y-1">
-        <p className="text-slate-400">&copy; CatatLembur — Dioptimalkan penuh untuk kenyamanan pencatatan di mobile / laptop secara instan.</p>
+        <p className="text-slate-400">&copy; OTW (Overtime Work Management) — Dioptimalkan penuh untuk kenyamanan pencatatan di mobile / laptop secara instan.</p>
         <p className="text-[9px] text-slate-500 font-mono">Ditenagai oleh Kecerdasan Buatan Gemini 3.5 & Visualisasi Interaktif @google/genai</p>
       </footer>
     </div>
