@@ -12,15 +12,29 @@ const PORT = 3000;
 // Middleware
 app.use(express.json());
 
-// Initialize Gemini Client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Lazy initialization of Gemini Client
+let aiInstance: GoogleGenAI | null = null;
+
+function getGeminiClient(): GoogleGenAI {
+  if (!aiInstance) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key || key === "MY_GEMINI_API_KEY" || key.trim() === "") {
+      throw new Error(
+        "Kunci API Gemini (GEMINI_API_KEY) belum dikonfigurasi di secrets proyek Anda. " +
+        "Silakan buka menu 'Settings > Secrets' di Google AI Studio Build dan masukkan GEMINI_API_KEY Anda yang valid."
+      );
     }
+    aiInstance = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+  return aiInstance;
+}
 
 // API Routes
 app.get("/api/health", (req, res) => {
@@ -37,6 +51,7 @@ app.post("/api/parse-overtime", async (req, res) => {
   }
 
   try {
+    const ai = getGeminiClient();
     const referenceTime = clientTime || new Date().toISOString();
     
     // Call Gemini to parse
@@ -106,8 +121,8 @@ Berikan response eksklusif dalam bentuk JSON valid sesuai tipe schema yang diten
   } catch (error: any) {
     console.error("Gemini Parse Error:", error);
     res.status(500).json({ 
-      error: "Gagal memproses catatan dengan AI. Pastikan format input sesuai atau gunakan pengisian cepat.",
-      details: error.message 
+      error: "Gagal memproses catatan dengan AI.",
+      details: error.message || "Pastikan format input sesuai atau gunakan pengisian cepat."
     });
   }
 });

@@ -95,7 +95,16 @@ export default function AIParsingBox({ onLogAdd }: AIParsingBoxProps) {
       });
 
       if (!response.ok) {
-        throw new Error("Gagal menghubungi server AI");
+        let errMsg = "Terjadi kesalahan jaringan atau respons buruk dari server.";
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) {
+            errMsg = `${errData.error} ${errData.details ? `\nDetail: ${errData.details}` : ""}`;
+          }
+        } catch (e) {
+          // Fallback to simple parse
+        }
+        throw new Error(errMsg);
       }
 
       const data = await response.json();
@@ -116,8 +125,8 @@ export default function AIParsingBox({ onLogAdd }: AIParsingBoxProps) {
         );
       }
     } catch (err: any) {
-      console.error(err);
-      setError("Terjadi kesalahan jaringan atau server AI. Silakan coba pengisian manual di bawah.");
+      console.error("AI Parsing Error:", err);
+      setError(err?.message || "Terjadi kesalahan jaringan atau server AI. Silakan coba pengisian manual di bawah.");
     } finally {
       setLoading(false);
     }
