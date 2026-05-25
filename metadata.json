@@ -1,6 +1,6 @@
 {
   "name": "OTW - Overtime Work Management",
   "description": "Over Time Work Management System - Aplikasi cerdas berkelajuan tinggi untuk mencatat jam dan pencapaian lembur kerja dengan analisis AI teks dan visualisasi Heatmap.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

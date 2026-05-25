@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Sparkles, Loader2, Check, CornerDownRight, AlertCircle, Info } from "lucide-react";
+import React, { useState, useRef } from "react";
+import { Sparkles, Loader2, Check, CornerDownRight, AlertCircle, Info, Mic, MicOff } from "lucide-react";
 import { OvertimeLog } from "../types";
 
 interface AIParsingBoxProps {
@@ -19,6 +19,60 @@ export default function AIParsingBox({ onLogAdd }: AIParsingBoxProps) {
   const [error, setError] = useState<string | null>(null);
   const [parsedDraft, setParsedDraft] = useState<Omit<OvertimeLog, "id" | "createdAt"> & { explanation?: string } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Speech Recognition hook-up
+  const recognitionRef = useRef<any>(null);
+  const [isListening, setIsListening] = useState(false);
+
+  const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  const speechSupported = !!SpeechRecognitionAPI;
+
+  const toggleListening = () => {
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+    } else {
+      try {
+        const recognition = new SpeechRecognitionAPI();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = "id-ID";
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          setError(null);
+        };
+
+        recognition.onresult = (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          setInputText((prev) => (prev ? prev.trim() + " " + transcript : transcript));
+        };
+
+        recognition.onerror = (event: any) => {
+          console.error("Speech recognition error:", event);
+          setIsListening(false);
+          if (event.error === "not-allowed") {
+            setError("Gagal mengakses mikrofon. Pastikan Anda mengizinkan izin akses mic di browser.");
+          } else {
+            setError(`Error input suara: ${event.error || "Kesalahan tidak dikenal"}`);
+          }
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+      } catch (err) {
+        console.error("Speech recognition initialization failed:", err);
+        setError("Browser tidak mendukung atau tidak berhasil memulai input suara.");
+        setIsListening(false);
+      }
+    }
+  };
 
   const handleAiParse = async (textToParse: string) => {
     if (!textToParse.trim()) return;
@@ -105,14 +159,52 @@ export default function AIParsingBox({ onLogAdd }: AIParsingBoxProps) {
       </div>
 
       <div className="space-y-4">
-        <div>
+        <div className="relative">
           <textarea
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             placeholder="Contoh: 'kemarin lembur 2.5 jam kelarin laporan bulanan divisi finance' atau 'hari jumat jam 18:00 sampai 20:00 rapat koordinasi release'"
-            className="w-full h-24 bg-white/5 border border-white/10 focus:border-indigo-500/50 hover:border-white/20 rounded-2xl px-4 py-3 text-sm text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all resize-none font-sans"
+            className="w-full h-28 bg-white/5 border border-white/10 focus:border-indigo-500/50 hover:border-white/20 rounded-2xl pl-4 pr-12 py-3.5 text-sm text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all resize-none font-sans"
             disabled={loading}
           />
+          
+          {/* Floating Microphone Dictation Trigger */}
+          {speechSupported ? (
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`absolute right-3.5 bottom-3.5 p-2.5 rounded-xl border transition-all cursor-pointer shadow-lg flex items-center justify-center ${
+                isListening
+                  ? "bg-red-500/20 border-red-500/40 text-red-300 animate-pulse scale-105"
+                  : "bg-white/5 border-white/10 text-slate-400 hover:text-indigo-400 hover:border-indigo-500/30 hover:bg-indigo-500/10 active:scale-95"
+              }`}
+              title={isListening ? "Sedang mendengarkan... Ambil suara Anda lalu klik lagi untuk berhenti" : "Input bebas pakai suara (Bebas Biaya)"}
+            >
+              {isListening ? (
+                <div className="flex items-center gap-1.5 font-mono text-[10px] font-bold">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+                  <MicOff className="w-4 h-4 text-red-400" />
+                </div>
+              ) : (
+                <Mic className="w-4 h-4 transition-transform hover:scale-110" />
+              )}
+            </button>
+          ) : (
+            <div 
+              className="absolute right-3.5 bottom-3.5 p-2 text-slate-600 cursor-not-allowed"
+              title="Browser Anda belum mendukung Speech Recognition"
+            >
+              <Mic className="w-4 h-4 opacity-30" />
+            </div>
+          )}
+
+          {/* Active Listening Overlay Indicator */}
+          {isListening && (
+            <div className="absolute top-3 right-4 px-2.5 py-1 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] font-mono font-bold text-red-400 animate-pulse flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+              BICARA SEKARANG (BAHASA INDONESIA)
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
