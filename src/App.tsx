@@ -49,6 +49,30 @@ const INITIAL_DEMO_LOGS: OvertimeLog[] = [
   },
 ];
 
+// Helper to robustly check if an error is due to being offline or unavailable
+function checkIsOfflineError(err: any): boolean {
+  if (!err) return false;
+  // Convert err to a lowercase string safely
+  const errStr = (
+    err instanceof Error 
+      ? err.message 
+      : typeof err === "object" && err !== null && "error" in err 
+        ? String((err as any).error) 
+        : String(err)
+  ).toLowerCase();
+
+  return (
+    errStr.includes("offline") ||
+    errStr.includes("unavailable") ||
+    errStr.includes("failed to get") ||
+    errStr.includes("network") ||
+    errStr.includes("not-found") ||
+    errStr.includes("failed-precondition") ||
+    err?.code === "unavailable" ||
+    err?.code === "failed-precondition"
+  );
+}
+
 export default function App() {
   const [logs, setLogs] = useState<OvertimeLog[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>("");
@@ -89,16 +113,30 @@ export default function App() {
 
   // Load state and listen to configuration and logs on mount
   useEffect(() => {
-    // 1. Instantly pull local storage to keep app ultra-fast
-    const storedLogs = localStorage.getItem("catat_lembur_logs");
+    // 1. Instantly pull isolated local storage based on last active user to keep app ultra-fast
+    const lastUser = localStorage.getItem("last_active_user") || "guest";
+    const logsKey = lastUser === "guest" ? "catat_lembur_logs_guest" : `catat_lembur_logs_${lastUser}`;
+    
+    let storedLogs = localStorage.getItem(logsKey);
+    // Backward compatibility lookup
+    if (!storedLogs && lastUser === "guest") {
+      storedLogs = localStorage.getItem("catat_lembur_logs");
+    }
+
     if (storedLogs) {
       setLogs(JSON.parse(storedLogs));
     } else {
       setLogs(INITIAL_DEMO_LOGS);
-      localStorage.setItem("catat_lembur_logs", JSON.stringify(INITIAL_DEMO_LOGS));
+      localStorage.setItem(logsKey, JSON.stringify(INITIAL_DEMO_LOGS));
     }
 
-    const storedSettings = localStorage.getItem("catat_lembur_settings");
+    const settingsKey = lastUser === "guest" ? "catat_lembur_settings_guest" : `catat_lembur_settings_${lastUser}`;
+    let storedSettings = localStorage.getItem(settingsKey);
+    // Backward compatibility lookup
+    if (!storedSettings && lastUser === "guest") {
+      storedSettings = localStorage.getItem("catat_lembur_settings");
+    }
+
     if (storedSettings) {
       const parsed = JSON.parse(storedSettings);
       setSettings(prev => ({
@@ -107,7 +145,7 @@ export default function App() {
         overtimeType: parsed.overtimeType || "hidup"
       }));
     } else {
-      localStorage.setItem("catat_lembur_settings", JSON.stringify(settings));
+      localStorage.setItem(settingsKey, JSON.stringify(settings));
     }
 
     const todayStr = new Date().toISOString().split("T")[0];
@@ -118,7 +156,7 @@ export default function App() {
       setIsTimerRunning(true);
     }
 
-    // 2. Setup real-time Firebase Auth/Firestore listener
+    // 2. Setup real-time Firebase Auth/Firestore listener with secure context isolation
     let unsubscribeLogs: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
@@ -127,34 +165,76 @@ export default function App() {
 
       if (currentUser) {
         setAuthError(null);
+        
+        // Save current active user ID to avoid crosstalk
+        localStorage.setItem("last_active_user", currentUser.uid);
 
-        // a. Sync Profile settings with Firestore
+        // a. Sync Profile settings with Firestore (user-specific scope)
         const configPath = `users/${currentUser.uid}/settings/config`;
         const configRef = doc(db, configPath);
+        const userSettingsKey = `catat_lembur_settings_${currentUser.uid}`;
+        
         try {
           const configSnap = await getDoc(configRef);
           if (configSnap.exists()) {
             const remoteSettings = configSnap.data() as OvertimeSettings;
             setSettings(remoteSettings);
-            localStorage.setItem("catat_lembur_settings", JSON.stringify(remoteSettings));
+            localStorage.setItem(userSettingsKey, JSON.stringify(remoteSettings));
           } else {
-            // First login: upload local settings to cloud
-            await setDoc(configRef, settings);
+            // First login for this account: let's build fresh settings pre-populated with their dynamic Google Name!
+            const defaultGoogleName = currentUser.displayName || currentUser.email?.split("@")[0] || "User";
+            const initialUserData: OvertimeSettings = {
+              ...settings,
+              employeeName: defaultGoogleName,
+            };
+            setSettings(initialUserData);
+            await setDoc(configRef, initialUserData);
+            localStorage.setItem(userSettingsKey, JSON.stringify(initialUserData));
           }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.GET, configPath);
+        } catch (err: any) {
+          const isOfflineErr = checkIsOfflineError(err);
+          if (isOfflineErr) {
+            console.warn("Firestore is offline on startup, falling back to user-specific cached settings:", err);
+            const userCachedSettings = localStorage.getItem(userSettingsKey);
+            if (userCachedSettings) {
+              try {
+                setSettings(JSON.parse(userCachedSettings));
+              } catch (e) {
+                // Ignore parse errors
+              }
+            }
+          } else {
+            handleFirestoreError(err, OperationType.GET, configPath);
+          }
         }
 
         // b. Subs to real-time sync of Logs
         const logsPath = `users/${currentUser.uid}/logs`;
         const logsRef = collection(db, logsPath);
+        const userLogsKey = `catat_lembur_logs_${currentUser.uid}`;
+        
         unsubscribeLogs = onSnapshot(
           logsRef,
           async (snapshot) => {
             if (snapshot.empty) {
-              // Server collection is empty. Let's sync current local logs to cloud (if any actual logs)
-              const localLogsStr = localStorage.getItem("catat_lembur_logs");
-              const currentLocalLogs = localLogsStr ? JSON.parse(localLogsStr) : [];
+              // Server collection is empty. Let's see if there are any offline logs specifically for this logged-in account,
+              // or transition logs if they just upgraded from guest state (and didn't switch distinct accounts).
+              const storedUserLogs = localStorage.getItem(userLogsKey);
+              
+              let currentLocalLogs: OvertimeLog[] = [];
+              if (storedUserLogs) {
+                currentLocalLogs = JSON.parse(storedUserLogs);
+              } else {
+                // If there is no specific user cache, only import if previous state was a guest
+                const lastUserTypeCheck = lastUser;
+                if (!lastUserTypeCheck || lastUserTypeCheck === "guest") {
+                  const guestLogs = localStorage.getItem("catat_lembur_logs_guest") || localStorage.getItem("catat_lembur_logs");
+                  if (guestLogs) {
+                    currentLocalLogs = JSON.parse(guestLogs).filter((l: OvertimeLog) => !l.id.startsWith("demo-"));
+                  }
+                }
+              }
+
               const actualOfflineLogs = currentLocalLogs.filter(
                 (l: OvertimeLog) => !l.id.startsWith("demo-")
               );
@@ -166,8 +246,13 @@ export default function App() {
                 });
                 try {
                   await batch.commit();
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.WRITE, logsPath);
+                } catch (err: any) {
+                  const isOfflineErr = checkIsOfflineError(err);
+                  if (isOfflineErr) {
+                    console.warn("Firestore batch is offline, queued locally:", err);
+                  } else {
+                    handleFirestoreError(err, OperationType.WRITE, logsPath);
+                  }
                 }
               } else {
                 setLogs([]);
@@ -179,26 +264,51 @@ export default function App() {
               });
               cloudLogs.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
               setLogs(cloudLogs);
-              localStorage.setItem("catat_lembur_logs", JSON.stringify(cloudLogs));
+              localStorage.setItem(userLogsKey, JSON.stringify(cloudLogs));
             }
           },
-          (err) => {
-            handleFirestoreError(err, OperationType.GET, logsPath);
+          (err: any) => {
+            const isOfflineErr = checkIsOfflineError(err);
+            if (isOfflineErr) {
+              console.warn("Firestore onSnapshot is offline, falling back to local user logs cached:", err);
+              const storedLogsLocal = localStorage.getItem(userLogsKey);
+              if (storedLogsLocal) {
+                try {
+                  setLogs(JSON.parse(storedLogsLocal));
+                } catch (e) {
+                  // Ignore
+                }
+              }
+            } else {
+              handleFirestoreError(err, OperationType.GET, logsPath);
+            }
           }
         );
       } else {
-        // Logged out: fallback to local stores
+        // Logged out: fallback to guest local stores
         if (unsubscribeLogs) {
           unsubscribeLogs();
         }
-        const storedLogsLocal = localStorage.getItem("catat_lembur_logs");
+        localStorage.setItem("last_active_user", "guest");
+        
+        const guestLogsKey = "catat_lembur_logs_guest";
+        let storedLogsLocal = localStorage.getItem(guestLogsKey);
+        if (!storedLogsLocal) {
+          storedLogsLocal = localStorage.getItem("catat_lembur_logs");
+        }
+        
         if (storedLogsLocal) {
           setLogs(JSON.parse(storedLogsLocal));
         } else {
           setLogs(INITIAL_DEMO_LOGS);
         }
         
-        const storedSettingsLocal = localStorage.getItem("catat_lembur_settings");
+        const guestSettingsKey = "catat_lembur_settings_guest";
+        let storedSettingsLocal = localStorage.getItem(guestSettingsKey);
+        if (!storedSettingsLocal) {
+          storedSettingsLocal = localStorage.getItem("catat_lembur_settings");
+        }
+
         if (storedSettingsLocal) {
           const parsed = JSON.parse(storedSettingsLocal);
           setSettings(prev => ({
@@ -206,6 +316,14 @@ export default function App() {
             ...parsed,
             overtimeType: parsed.overtimeType || "hidup"
           }));
+        } else {
+          setSettings({
+            hourlyRate: 50000,
+            monthlyTargetHours: 20,
+            employeeName: "Firul",
+            department: "Divisi IT & Development",
+            overtimeType: "hidup",
+          });
         }
       }
     });
@@ -224,46 +342,70 @@ export default function App() {
       id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       createdAt: new Date().toISOString(),
     };
-
+ 
     const updatedLogs = [freshLog, ...logs];
     setLogs(updatedLogs);
-    localStorage.setItem("catat_lembur_logs", JSON.stringify(updatedLogs));
-
+    
+    // Save to isolated user-specific key
+    const logsKey = user ? `catat_lembur_logs_${user.uid}` : "catat_lembur_logs_guest";
+    localStorage.setItem(logsKey, JSON.stringify(updatedLogs));
+ 
     if (user) {
       const logPath = `users/${user.uid}/logs/${freshLog.id}`;
       try {
         await setDoc(doc(db, logPath), freshLog);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, logPath);
+      } catch (err: any) {
+        const isOfflineErr = checkIsOfflineError(err);
+        if (isOfflineErr) {
+          console.warn("Firestore is offline, log queued in local database cache:", err);
+        } else {
+          handleFirestoreError(err, OperationType.WRITE, logPath);
+        }
       }
     }
   };
-
+ 
   const handleLogDelete = async (id: string) => {
     const updated = logs.filter((l) => l.id !== id);
     setLogs(updated);
-    localStorage.setItem("catat_lembur_logs", JSON.stringify(updated));
-
+    
+    // Save to isolated user-specific key
+    const logsKey = user ? `catat_lembur_logs_${user.uid}` : "catat_lembur_logs_guest";
+    localStorage.setItem(logsKey, JSON.stringify(updated));
+ 
     if (user) {
       const logPath = `users/${user.uid}/logs/${id}`;
       try {
         await deleteDoc(doc(db, logPath));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, logPath);
+      } catch (err: any) {
+        const isOfflineErr = checkIsOfflineError(err);
+        if (isOfflineErr) {
+          console.warn("Firestore is offline, deletion queued in local database cache:", err);
+        } else {
+          handleFirestoreError(err, OperationType.DELETE, logPath);
+        }
       }
     }
   };
-
+ 
   const handleSettingsUpdate = async (updatedSettings: OvertimeSettings) => {
     setSettings(updatedSettings);
-    localStorage.setItem("catat_lembur_settings", JSON.stringify(updatedSettings));
-
+    
+    // Save to isolated user-specific key
+    const settingsKey = user ? `catat_lembur_settings_${user.uid}` : "catat_lembur_settings_guest";
+    localStorage.setItem(settingsKey, JSON.stringify(updatedSettings));
+ 
     if (user) {
       const configPath = `users/${user.uid}/settings/config`;
       try {
         await setDoc(doc(db, configPath), updatedSettings);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, configPath);
+      } catch (err: any) {
+        const isOfflineErr = checkIsOfflineError(err);
+        if (isOfflineErr) {
+          console.warn("Firestore is offline, settings update queued in local database cache:", err);
+        } else {
+          handleFirestoreError(err, OperationType.WRITE, configPath);
+        }
       }
     }
   };
@@ -641,8 +783,8 @@ export default function App() {
         {/* Compact Greeting Header */}
         <div id="greeting-header" className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 py-2 border-b border-white/5 pb-4">
           <div>
-            <h1 className="text-xl font-bold text-slate-100 font-sans tracking-tight">
-              Selamat datang kembali, {settings.employeeName}! 👋
+            <h1 className="text-xl font-bold text-slate-100 font-sans tracking-tight animate-fade-in">
+              Selamat datang kembali, {user?.displayName || settings.employeeName}! 👋
             </h1>
             <p className="text-xs text-slate-400">
               Kelola rincian gaji, waktu, dan aktivitas lembur Anda dengan praktis dan ringkas.

@@ -1,9 +1,10 @@
 {
+  "projectId": "otwm-872e0",
+  "appId": "1:659510226107:web:7742c1e464c1202ad5cd9e",
   "apiKey": "AIzaSyBFGSD3BGQH3shKrxZQXbTHo8fzJT9lh5w",
   "authDomain": "otwm-872e0.firebaseapp.com",
-  "projectId": "otwm-872e0",
+  "firestoreDatabaseId": "ai-studio-6e461013-f48a-40bf-95ef-3cbe7f517aa3",
   "storageBucket": "otwm-872e0.firebasestorage.app",
   "messagingSenderId": "659510226107",
-  "appId": "1:659510226107:web:c58b93d0237e2ed3d5cd9e",
-  "firestoreDatabaseId": "(default)"
+  "measurementId": ""
 }
