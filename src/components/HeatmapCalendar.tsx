@@ -72,7 +72,7 @@ export default function HeatmapCalendar({
   showFormOnly = false,
   onCloseForm
 }: HeatmapCalendarProps) {
-  const [currentDate, setCurrentDate] = useState(new Date("2026-05-23T00:00:00Z")); // Bound to local time reference 2026-05
+  const [currentDate, setCurrentDate] = useState(new Date()); // Dynamic current date for current running month default
   const [quickHours, setQuickHours] = useState<number>(2); // 1 to 12 whole hours
   const [selectedCategory, setSelectedCategory] = useState<string>("Cek Vibrasi");
   const [customCategory, setCustomCategory] = useState<string>("");

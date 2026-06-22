@@ -1,20 +1,24 @@
 import React, { useState } from "react";
-import { Search, Trash2, Calendar, Coffee, AlertCircle, Activity, Layers, Droplet, Gauge, Wrench, Factory, LayoutList, ChevronLeft, ChevronRight, X, Clock, HelpCircle, Package } from "lucide-react";
-import { OvertimeLog } from "../types";
+import { Search, Trash2, Calendar, Coffee, AlertCircle, Activity, Layers, Droplet, Gauge, Wrench, Factory, LayoutList, ChevronLeft, ChevronRight, X, Clock, HelpCircle, Package, FileText } from "lucide-react";
+import { OvertimeLog, OvertimeSettings, Signer } from "../types";
 import { getDayStatus } from "../utils/holidayHelper";
+import SPLExportModal from "./SPLExportModal";
 
 interface LogHistoryProps {
   logs: OvertimeLog[];
   onLogDelete: (id: string) => void;
   selectedDate: string;
   defaultMode?: "list" | "calendar";
+  settings: OvertimeSettings;
+  signers: Signer[];
 }
 
-export default function LogHistory({ logs, onLogDelete, selectedDate, defaultMode = "calendar" }: LogHistoryProps) {
+export default function LogHistory({ logs, onLogDelete, selectedDate, defaultMode = "calendar", settings, signers }: LogHistoryProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [historyMode, setHistoryMode] = useState<"list" | "calendar">(defaultMode);
-  const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date("2026-05-23T00:00:00Z"));
+  const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [selectedPopupDate, setSelectedPopupDate] = useState<string | null>(null);
+  const [selectedExportLog, setSelectedExportLog] = useState<OvertimeLog | null>(null);
 
   const todayStr = new Date().toISOString().split("T")[0];
 
@@ -529,7 +533,19 @@ export default function LogHistory({ logs, onLogDelete, selectedDate, defaultMod
                           </div>
                         )}
 
-                        <div className="flex justify-end pt-2 border-t border-white/5 mt-1">
+                        <div className="flex justify-between items-center pt-2 border-t border-white/5 mt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedExportLog(log);
+                            }}
+                            className="text-indigo-300 hover:text-indigo-200 hover:bg-indigo-500/10 p-1.5 px-3 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 text-[10px] font-bold border border-indigo-500/20"
+                            title="Unduh Surat Perintah Lembur Resmi (Word / PDF)"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                            Unduh SPL
+                          </button>
+
                           <button
                             onClick={() => {
                               onLogDelete(log.id);
@@ -551,7 +567,9 @@ export default function LogHistory({ logs, onLogDelete, selectedDate, defaultMod
               <div className="mt-6 pt-4 border-t border-white/5 flex justify-end gap-2 relative z-10">
                 <button
                   type="button"
-                  onClick={() => setSelectedPopupDate(null)}
+                  onClick={() => {
+                    setSelectedPopupDate(null);
+                  }}
                   className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/25 text-xs font-bold text-slate-200 rounded-xl transition-all cursor-pointer"
                 >
                   Tutup Rincian
@@ -561,6 +579,15 @@ export default function LogHistory({ logs, onLogDelete, selectedDate, defaultMod
           </div>
         );
       })()}
+
+      {/* SPL Export Modal integration */}
+      <SPLExportModal
+        isOpen={selectedExportLog !== null}
+        onClose={() => setSelectedExportLog(null)}
+        log={selectedExportLog}
+        settings={settings}
+        signers={signers}
+      />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { TrendingUp, Banknote, Target, Hourglass, Clock, Sparkles, Calendar, Calculator, Percent, ShieldCheck } from "lucide-react";
+import { TrendingUp, Banknote, Target, Hourglass, Clock, Sparkles, Calendar, Calculator, Percent, ShieldCheck, Trophy, Flame, Zap } from "lucide-react";
 import { OvertimeLog, OvertimeSettings } from "../types";
 import { getDayStatus } from "../utils/holidayHelper";
 
@@ -192,9 +192,9 @@ export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: 
 
   // Dynamic reference epoch calculation
   const getReferenceDate = () => {
-    if (logs.length === 0) return new Date("2026-05-24T00:00:00Z");
+    if (logs.length === 0) return new Date();
     const dates = logs.map(l => new Date(l.date + "T00:00:00Z").getTime()).filter(t => !isNaN(t));
-    if (dates.length === 0) return new Date("2026-05-24T00:00:00Z");
+    if (dates.length === 0) return new Date();
     return new Date(Math.max(...dates));
   };
 
@@ -346,6 +346,111 @@ export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: 
   const daysLabel = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
   const maxWeeklyHour = Math.max(...weeklyHours, 1);
 
+  // Dynamic calculations for highest achievements (Longest record & Overtime Day Streak)
+  const getAchievements = () => {
+    if (logs.length === 0) {
+      return {
+        longestRecord: 0,
+        longestRecordDate: "-",
+        longestRecordActivity: "-",
+        maxStreak: 0,
+        currentStreak: 0,
+        avgDuration: 0,
+      };
+    }
+
+    // 1. Longest Single Overtime Session Record
+    const maxLog = logs.reduce((max, log) => log.durationHours > max.durationHours ? log : max, logs[0]);
+    const longestRecord = maxLog ? maxLog.durationHours : 0;
+    const longestRecordDate = maxLog
+      ? new Date(maxLog.date).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })
+      : "-";
+    const longestRecordActivity = maxLog ? maxLog.activity : "-";
+
+    // 2. Overtime Day Streaks (Based on consecutive calendar dates having overtime logs)
+    const datesWithOvertime = Array.from(
+      new Set(
+        logs
+          .filter(log => log.durationHours > 0)
+          .map(log => log.date)
+      )
+    );
+
+    let maxStreak = 1;
+    let currentStreak = 0;
+
+    if (datesWithOvertime.length > 0) {
+      // Sort ascending to search forward
+      const sortedDates = datesWithOvertime.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      
+      let tempStreak = 1;
+      maxStreak = 1;
+
+      for (let i = 1; i < sortedDates.length; i++) {
+        const prev = new Date(sortedDates[i - 1]);
+        const curr = new Date(sortedDates[i]);
+        
+        const diffTime = curr.getTime() - prev.getTime();
+        const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays === 1) {
+          tempStreak++;
+          if (tempStreak > maxStreak) {
+            maxStreak = tempStreak;
+          }
+        } else if (diffDays > 1) {
+          tempStreak = 1;
+        }
+      }
+
+      // Calculate current active streak from today or yesterday back
+      const todayStr = new Date().toISOString().split("T")[0];
+      const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+      const hasToday = datesWithOvertime.includes(todayStr);
+      const hasYesterday = datesWithOvertime.includes(yesterdayStr);
+
+      if (hasToday || hasYesterday) {
+        const reversedSorted = [...sortedDates].reverse();
+        let lastChecked = hasToday ? new Date(todayStr) : new Date(yesterdayStr);
+        currentStreak = 1;
+
+        for (let i = 0; i < reversedSorted.length; i++) {
+          const itemDate = new Date(reversedSorted[i]);
+          if (itemDate.getTime() === lastChecked.getTime()) continue;
+
+          const diffTime = lastChecked.getTime() - itemDate.getTime();
+          const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+          if (diffDays === 1) {
+            currentStreak++;
+            lastChecked = itemDate;
+          } else if (diffDays > 1) {
+            break;
+          }
+        }
+      } else {
+        currentStreak = 0;
+      }
+    } else {
+      maxStreak = 0;
+    }
+
+    // 3. Average duration per session
+    const totalHours = logs.reduce((sum, item) => sum + item.durationHours, 0);
+    const avgDuration = totalHours / logs.length;
+
+    return {
+      longestRecord,
+      longestRecordDate,
+      longestRecordActivity,
+      maxStreak,
+      currentStreak,
+      avgDuration,
+    };
+  };
+
+  const achievements = getAchievements();
+
   // Group by activity for division summary
   const getActivityGroups = () => {
     const groups: { [key: string]: number } = {};
@@ -492,6 +597,85 @@ export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: 
               }}
               className="bg-transparent text-slate-200 text-xs font-semibold focus:outline-none w-full cursor-pointer accent-indigo-500"
             />
+          </div>
+        </div>
+      </div>
+
+      {/* Dynamic Bento Achievement Badges - Longest Overtime & Streaks */}
+      <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in text-left">
+        {/* Card A: Longest Record */}
+        <div className="backdrop-blur-xl bg-orange-500/5 hover:bg-orange-500/10 border border-orange-500/15 rounded-3xl p-5 shadow-xl transition-all relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/10 blur-2xl rounded-full pointer-events-none group-hover:scale-125 transition-transform"></div>
+          <div className="flex gap-4 items-start relative z-10">
+            <div className="p-3 bg-orange-500/15 text-orange-400 rounded-2xl border border-orange-500/20">
+              <Trophy className="w-5 h-5 text-orange-400" />
+            </div>
+            <div className="space-y-1 min-w-0 flex-1">
+              <span className="text-[10px] text-orange-300/80 font-bold uppercase tracking-wider font-mono">Rekor Terlama</span>
+              <p className="text-2xl font-mono font-black text-orange-300">
+                {achievements.longestRecord.toFixed(1)} <span className="text-xs font-sans text-slate-400 font-normal">Jam</span>
+              </p>
+              <p className="text-[10px] text-slate-400 leading-tight block truncate max-w-full" title={achievements.longestRecordActivity}>
+                {achievements.longestRecordActivity === "-" ? "Belum ada data" : `${achievements.longestRecordDate} • ${achievements.longestRecordActivity}`}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Card B: Longest Streak */}
+        <div className="backdrop-blur-xl bg-pink-500/5 hover:bg-pink-500/10 border border-pink-500/15 rounded-3xl p-5 shadow-xl transition-all relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-pink-500/10 blur-2xl rounded-full pointer-events-none group-hover:scale-125 transition-transform"></div>
+          <div className="flex gap-4 items-start relative z-10">
+            <div className="p-3 bg-pink-500/15 text-pink-400 rounded-2xl border border-pink-500/20">
+              <Flame className="w-5 h-5 text-pink-400" />
+            </div>
+            <div className="space-y-1 min-w-0 flex-1">
+              <span className="text-[10px] text-pink-300/80 font-bold uppercase tracking-wider font-mono">Streak Terlama</span>
+              <p className="text-2xl font-mono font-black text-pink-300">
+                {achievements.maxStreak} <span className="text-xs font-sans text-slate-400 font-normal">Hari</span>
+              </p>
+              <p className="text-[10px] text-slate-400 leading-tight">
+                Rekor rentetan hari kerja lembur berturut-turut.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Card C: Current Active Streak */}
+        <div className="backdrop-blur-xl bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/15 rounded-3xl p-5 shadow-xl transition-all relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/10 blur-2xl rounded-full pointer-events-none group-hover:scale-125 transition-transform"></div>
+          <div className="flex gap-4 items-start relative z-10">
+            <div className="p-3 bg-amber-500/15 text-amber-400 rounded-2xl border border-amber-500/20">
+              <Zap className="w-5 h-5 text-amber-400 animate-pulse" />
+            </div>
+            <div className="space-y-1 min-w-0 flex-1">
+              <span className="text-[10px] text-amber-300/80 font-bold uppercase tracking-wider font-mono">Streak Aktif</span>
+              <p className="text-2xl font-mono font-black text-amber-300">
+                {achievements.currentStreak} <span className="text-xs font-sans text-slate-400 font-normal">Hari</span>
+              </p>
+              <p className="text-[10px] text-slate-400 leading-tight">
+                {achievements.currentStreak > 0 ? "Hebat! Pertahankan momentum Anda!" : "Belum ada streak berjalan hari ini."}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Card D: Average Duration */}
+        <div className="backdrop-blur-xl bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/15 rounded-3xl p-5 shadow-xl transition-all relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/10 blur-2xl rounded-full pointer-events-none group-hover:scale-125 transition-transform"></div>
+          <div className="flex gap-4 items-start relative z-10">
+            <div className="p-3 bg-indigo-500/15 text-indigo-400 rounded-2xl border border-indigo-500/20">
+              <Hourglass className="w-5 h-5 text-indigo-400" />
+            </div>
+            <div className="space-y-1 min-w-0 flex-1">
+              <span className="text-[10px] text-indigo-300/80 font-bold uppercase tracking-wider font-mono">Rata-rata Durasi</span>
+              <p className="text-2xl font-mono font-black text-indigo-300">
+                {achievements.avgDuration.toFixed(1)} <span className="text-xs font-sans text-slate-400 font-normal">Jam</span>
+              </p>
+              <p className="text-[10px] text-slate-400 leading-tight">
+                Rata-rata jam kerja per sesi lembur.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -661,25 +845,58 @@ export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: 
             <div className="flex-1 space-y-2">
               <div>
                 <span className="text-[10px] text-slate-400 block">Jam Terisi</span>
-                <span className="text-xl font-mono font-bold text-slate-100">
-                  {totalHoursMonth.toFixed(1)} <span className="text-xs font-sans text-slate-400">/ {settings.monthlyTargetHours} Jam</span>
+                <span className="text-xl font-mono font-bold text-slate-100 block">
+                  {totalHoursMonth.toFixed(1)} <span className="text-xs font-sans text-slate-400">Jam</span>
                 </span>
               </div>
 
-              {/* Increments controls for target */}
-              <div className="flex items-center gap-1.5 pt-1">
-                <button
-                  onClick={() => handleTargetChange(Math.max(5, settings.monthlyTargetHours - 5))}
-                  className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-[10px] rounded-lg font-semibold cursor-pointer transition-all"
-                >
-                  -5 Jm
-                </button>
-                <button
-                  onClick={() => handleTargetChange(settings.monthlyTargetHours + 5)}
-                  className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-[10px] rounded-lg font-semibold cursor-pointer transition-all"
-                >
-                  +5 Jm
-                </button>
+              {/* Increments & custom inputs controls for target */}
+              <div className="space-y-1">
+                <span className="text-[10px] text-slate-405 text-slate-400 block">Target Bulanan (Jam):</span>
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={settings.monthlyTargetHours}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      handleTargetChange(isNaN(val) ? 20 : val);
+                    }}
+                    className="w-14 bg-slate-900/80 border border-white/10 hover:border-white/20 focus:border-indigo-500/50 rounded-lg px-1.5 py-1 text-xs text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-505 focus:ring-indigo-500/30 font-black text-center"
+                    title="Ketik target jam kustom Anda"
+                  />
+                  <div className="flex gap-0.5">
+                    <button
+                      onClick={() => handleTargetChange(Math.max(1, settings.monthlyTargetHours - 1))}
+                      className="px-1.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-[9px] rounded font-bold cursor-pointer transition-all"
+                      title="Kurangi 1 jam"
+                    >
+                      -1
+                    </button>
+                    <button
+                      onClick={() => handleTargetChange(Math.max(1, settings.monthlyTargetHours - 5))}
+                      className="px-1.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-[9px] rounded font-bold cursor-pointer transition-all"
+                      title="Kurangi 5 jam"
+                    >
+                      -5
+                    </button>
+                    <button
+                      onClick={() => handleTargetChange(settings.monthlyTargetHours + 1)}
+                      className="px-1.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-[9px] rounded font-bold cursor-pointer transition-all"
+                      title="Tambah 1 jam"
+                    >
+                      +1
+                    </button>
+                    <button
+                      onClick={() => handleTargetChange(settings.monthlyTargetHours + 5)}
+                      className="px-1.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 hover:text-white text-[9px] rounded font-bold cursor-pointer transition-all"
+                      title="Tambah 5 jam"
+                    >
+                      +5
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

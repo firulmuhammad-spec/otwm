@@ -22,6 +22,17 @@ export interface OvertimeSettings {
   hourlyRate: number; // Hourly rate in Rupiah
   monthlyTargetHours: number; // Target monthly overtime hours (default e.g. 20)
   employeeName: string; // User name
-  department: string; // User division/department
+  employeeBadge: string; // User employee badge number / NIK (e.g., K. 210250)
+  department: string; // User division/department (e.g., Inspeksi Teknik Rotating & Khusus)
   overtimeType?: "hidup" | "mati"; // "hidup" for progressive multiplier, "mati" for flat
 }
+
+export interface Signer {
+  id: string;
+  name: string; // e.g., FERNANDEZ
+  badge: string; // e.g., 2084875
+  position: string; // e.g., Smd I ITR Pabrik I / Manager Inspeksi Teknik
+  plant: "Pabrik I" | "Pabrik II" | "Pabrik III" | "Umum"; // The factory division for filtering
+  createdAt: string;
+}
+

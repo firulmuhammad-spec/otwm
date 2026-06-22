@@ -28,10 +28,25 @@
         "hourlyRate": { "type": "number", "description": "Earnings per hour in Rupiah" },
         "monthlyTargetHours": { "type": "number", "description": "Target overtime hours per month" },
         "employeeName": { "type": "string", "description": "Display name of the employee" },
+        "employeeBadge": { "type": "string", "description": "Employee registration badge number or NIK" },
         "department": { "type": "string", "description": "Work department or division" },
         "overtimeType": { "type": "string", "enum": ["hidup", "mati"], "description": "Type of multiplier calculation" }
       },
-      "required": ["hourlyRate", "monthlyTargetHours", "employeeName", "department", "overtimeType"]
+      "required": ["hourlyRate", "monthlyTargetHours", "employeeName", "employeeBadge", "department", "overtimeType"]
+    },
+    "Signer": {
+      "title": "Signer",
+      "description": "Signing supervisor officer or inspector stored in the database",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique signer ID" },
+        "name": { "type": "string", "description": "Full name of the supervisor" },
+        "badge": { "type": "string", "description": "Employee ID or NIK number of the supervisor" },
+        "position": { "type": "string", "description": "Position/Title of the supervisor" },
+        "plant": { "type": "string", "enum": ["Pabrik I", "Pabrik II", "Pabrik III", "Umum"], "description": "Specific plant assignments" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Registration date-time timestamp" }
+      },
+      "required": ["id", "name", "badge", "position", "plant", "createdAt"]
     }
   },
   "firestore": {
@@ -42,6 +57,10 @@
     "/users/{userId}/logs/{logId}": {
       "schema": "OvertimeLog",
       "description": "Record of a user's logged overtime hours and activities"
+    },
+    "/users/{userId}/signers/{signerId}": {
+      "schema": "Signer",
+      "description": "Stored supervisors or signature authorities for generating official overtime request papers"
     }
   }
 }

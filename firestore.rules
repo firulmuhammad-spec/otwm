@@ -22,18 +22,38 @@ service cloud.firestore {
 
     // OvertimeSettings Validation
     function isValidSettings(settings) {
-      return settings.keys().hasAll(['hourlyRate', 'monthlyTargetHours', 'employeeName', 'department', 'overtimeType'])
-        && settings.keys().size() == 5
+      return settings.keys().hasAll(['hourlyRate', 'monthlyTargetHours', 'employeeName', 'employeeBadge', 'department', 'overtimeType'])
+        && settings.keys().size() == 6
         && settings.hourlyRate is number 
         && settings.hourlyRate >= 0
         && settings.monthlyTargetHours is number
         && settings.monthlyTargetHours >= 0
         && settings.employeeName is string
         && settings.employeeName.size() <= 100
+        && settings.employeeBadge is string
+        && settings.employeeBadge.size() <= 100
         && settings.department is string
         && settings.department.size() <= 100
         && settings.overtimeType is string
         && (settings.overtimeType == 'hidup' || settings.overtimeType == 'mati');
+    }
+
+    // Signer Validation
+    function isValidSigner(signer) {
+      return signer.keys().hasAll(['id', 'name', 'badge', 'position', 'plant', 'createdAt'])
+        && signer.keys().size() == 6
+        && signer.id is string
+        && signer.id.size() <= 128
+        && signer.name is string
+        && signer.name.size() <= 150
+        && signer.badge is string
+        && signer.badge.size() <= 100
+        && signer.position is string
+        && signer.position.size() <= 200
+        && signer.plant is string
+        && (signer.plant == 'Pabrik I' || signer.plant == 'Pabrik II' || signer.plant == 'Pabrik III' || signer.plant == 'Umum')
+        && signer.createdAt is string
+        && signer.createdAt.size() <= 50;
     }
 
     // OvertimeLog Validation
@@ -72,6 +92,12 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isValidLog(request.resource.data) && isValidId(logId);
         allow update: if isOwner(userId) && isValidLog(request.resource.data) && isValidId(logId);
         allow delete: if isOwner(userId) && isValidId(logId);
+      }
+
+      match /signers/{signerId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidSigner(request.resource.data) && isValidId(signerId);
+        allow delete: if isOwner(userId) && isValidId(signerId);
       }
     }
   }

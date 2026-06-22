@@ -6,16 +6,17 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Clock, Calendar, Sparkles, TrendingUp, HelpCircle, Save, Award, ChevronRight, Moon, LogOut, Coffee, ChevronDown, ChevronUp, Cloud, Check, Loader2 } from "lucide-react";
-import { OvertimeLog, OvertimeSettings } from "./types";
+import { OvertimeLog, OvertimeSettings, Signer } from "./types";
 import AIParsingBox from "./components/AIParsingBox";
 import ActiveTimer from "./components/ActiveTimer";
 import HeatmapCalendar from "./components/HeatmapCalendar";
 import OvertimeAnalytics from "./components/OvertimeAnalytics";
 import LogHistory from "./components/LogHistory";
+import ProfileModal from "./components/ProfileModal";
 
 // Firebase Integration imports
 import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/auth";
-import { collection, doc, onSnapshot, setDoc, deleteDoc, getDoc, writeBatch } from "firebase/firestore";
+import { collection, doc, onSnapshot, setDoc, deleteDoc, getDoc, getDocs, writeBatch } from "firebase/firestore";
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from "./firebase";
 
 // Initial mocking backup data just to make the application beautiful on first open
@@ -73,6 +74,41 @@ function checkIsOfflineError(err: any): boolean {
   );
 }
 
+const DEFAULT_SIGNERS: Signer[] = [
+  {
+    id: "fernandez",
+    name: "FERNANDEZ",
+    badge: "2084875",
+    position: "Smd I ITR Pabrik I",
+    plant: "Pabrik I",
+    createdAt: new Date("2026-06-22T00:00:00Z").toISOString(),
+  },
+  {
+    id: "suharnoto",
+    name: "SUHARNOTO",
+    badge: "2073912",
+    position: "Smd II ITR Pabrik II",
+    plant: "Pabrik II",
+    createdAt: new Date("2026-06-22T00:00:00Z").toISOString(),
+  },
+  {
+    id: "agus_setiawan",
+    name: "AGUS SETIAWAN",
+    badge: "2091244",
+    position: "Smd III ITR Pabrik III",
+    plant: "Pabrik III",
+    createdAt: new Date("2026-06-22T00:00:00Z").toISOString(),
+  },
+  {
+    id: "bambang_hermanto",
+    name: "BAMBANG HERMANTO",
+    badge: "2054321",
+    position: "Manager Inspeksi Teknik",
+    plant: "Umum",
+    createdAt: new Date("2026-06-22T00:00:00Z").toISOString(),
+  },
+];
+
 export default function App() {
   const [logs, setLogs] = useState<OvertimeLog[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>("");
@@ -80,9 +116,12 @@ export default function App() {
     hourlyRate: 50000,
     monthlyTargetHours: 20,
     employeeName: "Firul", // extracted default from firul.rma@gmail.com
-    department: "Divisi IT & Development",
+    employeeBadge: "K. 210250",
+    department: "Inspeksi Teknik Rotating & Khusus",
     overtimeType: "hidup",
   });
+  const [signers, setSigners] = useState<Signer[]>([]);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   
   // Firebase configuration state
   const [user, setUser] = useState<User | null>(null);
@@ -142,10 +181,22 @@ export default function App() {
       setSettings(prev => ({
         ...prev,
         ...parsed,
+        employeeBadge: parsed.employeeBadge || "K. 210250",
+        department: parsed.department || "Inspeksi Teknik Rotating & Khusus",
         overtimeType: parsed.overtimeType || "hidup"
       }));
     } else {
       localStorage.setItem(settingsKey, JSON.stringify(settings));
+    }
+
+    // Load signers for guest/initial status
+    const guestSignersKey = "catat_lembur_signers_guest";
+    const storedSignersLocal = localStorage.getItem(guestSignersKey);
+    if (storedSignersLocal) {
+      setSigners(JSON.parse(storedSignersLocal));
+    } else {
+      setSigners(DEFAULT_SIGNERS);
+      localStorage.setItem(guestSignersKey, JSON.stringify(DEFAULT_SIGNERS));
     }
 
     const todayStr = new Date().toISOString().split("T")[0];
@@ -158,8 +209,19 @@ export default function App() {
 
     // 2. Setup real-time Firebase Auth/Firestore listener with secure context isolation
     let unsubscribeLogs: (() => void) | null = null;
+    let unsubscribeSignersList: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      // Force cleanup of any previous active user snapshot listener to prevent crosstalk
+      if (unsubscribeLogs) {
+        unsubscribeLogs();
+        unsubscribeLogs = null;
+      }
+      if (unsubscribeSignersList) {
+        unsubscribeSignersList();
+        unsubscribeSignersList = null;
+      }
+
       setUser(currentUser);
       setIsAuthLoading(false);
 
@@ -178,14 +240,24 @@ export default function App() {
           const configSnap = await getDoc(configRef);
           if (configSnap.exists()) {
             const remoteSettings = configSnap.data() as OvertimeSettings;
-            setSettings(remoteSettings);
-            localStorage.setItem(userSettingsKey, JSON.stringify(remoteSettings));
+            const updated: OvertimeSettings = {
+              ...settings,
+              ...remoteSettings,
+              employeeBadge: remoteSettings.employeeBadge || "K. 210250",
+              department: remoteSettings.department || "Inspeksi Teknik Rotating & Khusus",
+            };
+            setSettings(updated);
+            localStorage.setItem(userSettingsKey, JSON.stringify(updated));
           } else {
             // First login for this account: let's build fresh settings pre-populated with their dynamic Google Name!
             const defaultGoogleName = currentUser.displayName || currentUser.email?.split("@")[0] || "User";
             const initialUserData: OvertimeSettings = {
-              ...settings,
+              hourlyRate: 50000,
+              monthlyTargetHours: 20,
               employeeName: defaultGoogleName,
+              employeeBadge: "K. 210250",
+              department: "Inspeksi Teknik Rotating & Khusus",
+              overtimeType: "hidup",
             };
             setSettings(initialUserData);
             await setDoc(configRef, initialUserData);
@@ -284,10 +356,56 @@ export default function App() {
             }
           }
         );
+
+        // c. Subs to real-time sync of Signers
+        const signersPath = `users/${currentUser.uid}/signers`;
+        const signersRef = collection(db, signersPath);
+        const userSignersKey = `catat_lembur_signers_${currentUser.uid}`;
+
+        const seedSignersIfEmpty = async () => {
+          try {
+            const snap = await getDocs(signersRef);
+            if (snap.empty) {
+              const batch = writeBatch(db);
+              DEFAULT_SIGNERS.forEach((sig) => {
+                batch.set(doc(db, `users/${currentUser.uid}/signers/${sig.id}`), sig);
+              });
+              await batch.commit();
+            }
+          } catch (seedErr) {
+            console.warn("Signers seed fallback error (likely offline):", seedErr);
+          }
+        };
+
+        seedSignersIfEmpty().then(() => {
+          unsubscribeSignersList = onSnapshot(
+            signersRef,
+            (snapshot) => {
+              const list: Signer[] = [];
+              snapshot.forEach((snapDoc) => {
+                list.push(snapDoc.data() as Signer);
+              });
+              setSigners(list);
+              localStorage.setItem(userSignersKey, JSON.stringify(list));
+            },
+            (err) => {
+              console.warn("Signers snapshot failed, using local user signers cache:", err);
+              const storedSigners = localStorage.getItem(userSignersKey);
+              if (storedSigners) {
+                setSigners(JSON.parse(storedSigners));
+              }
+            }
+          );
+        });
+
       } else {
         // Logged out: fallback to guest local stores
         if (unsubscribeLogs) {
           unsubscribeLogs();
+        }
+        if (unsubscribeSignersList) {
+          unsubscribeSignersList();
+          unsubscribeSignersList = null;
         }
         localStorage.setItem("last_active_user", "guest");
         
@@ -314,6 +432,8 @@ export default function App() {
           setSettings(prev => ({
             ...prev,
             ...parsed,
+            employeeBadge: parsed.employeeBadge || "K. 210250",
+            department: parsed.department || "Inspeksi Teknik Rotating & Khusus",
             overtimeType: parsed.overtimeType || "hidup"
           }));
         } else {
@@ -321,9 +441,18 @@ export default function App() {
             hourlyRate: 50000,
             monthlyTargetHours: 20,
             employeeName: "Firul",
-            department: "Divisi IT & Development",
+            employeeBadge: "K. 210250",
+            department: "Inspeksi Teknik Rotating & Khusus",
             overtimeType: "hidup",
           });
+        }
+
+        const guestSignersKey = "catat_lembur_signers_guest";
+        const storedSignersLocal = localStorage.getItem(guestSignersKey);
+        if (storedSignersLocal) {
+          setSigners(JSON.parse(storedSignersLocal));
+        } else {
+          setSigners(DEFAULT_SIGNERS);
         }
       }
     });
@@ -332,6 +461,9 @@ export default function App() {
       unsubscribeAuth();
       if (unsubscribeLogs) {
         unsubscribeLogs();
+      }
+      if (unsubscribeSignersList) {
+        unsubscribeSignersList();
       }
     };
   }, []);
@@ -406,6 +538,70 @@ export default function App() {
         } else {
           handleFirestoreError(err, OperationType.WRITE, configPath);
         }
+      }
+    }
+  };
+
+  const handleAddSigner = async (newSignerData: Omit<Signer, "id" | "createdAt">) => {
+    const freshSigner: Signer = {
+      ...newSignerData,
+      id: `sig-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      createdAt: new Date().toISOString(),
+    };
+    
+    const updatedSigners = [...signers, freshSigner];
+    setSigners(updatedSigners);
+    
+    const signersKey = user ? `catat_lembur_signers_${user.uid}` : "catat_lembur_signers_guest";
+    localStorage.setItem(signersKey, JSON.stringify(updatedSigners));
+    
+    if (user) {
+      const path = `users/${user.uid}/signers/${freshSigner.id}`;
+      try {
+        await setDoc(doc(db, path), freshSigner);
+      } catch (err) {
+        console.error("Failed adding signer to firestore:", err);
+      }
+    }
+  };
+
+  const handleDeleteSigner = async (id: string) => {
+    const updated = signers.filter((s) => s.id !== id);
+    setSigners(updated);
+    
+    const signersKey = user ? `catat_lembur_signers_${user.uid}` : "catat_lembur_signers_guest";
+    localStorage.setItem(signersKey, JSON.stringify(updated));
+    
+    if (user) {
+      const path = `users/${user.uid}/signers/${id}`;
+      try {
+        await deleteDoc(doc(db, path));
+      } catch (err) {
+        console.error("Failed deleting signer from firestore:", err);
+      }
+    }
+  };
+
+  const handleResetSigners = async () => {
+    setSigners(DEFAULT_SIGNERS);
+    
+    const signersKey = user ? `catat_lembur_signers_${user.uid}` : "catat_lembur_signers_guest";
+    localStorage.setItem(signersKey, JSON.stringify(DEFAULT_SIGNERS));
+    
+    if (user) {
+      const batch = writeBatch(db);
+      // Delete current local signers from firestore
+      signers.forEach((sig) => {
+        batch.delete(doc(db, `users/${user.uid}/signers/${sig.id}`));
+      });
+      // Add default signers
+      DEFAULT_SIGNERS.forEach((sig) => {
+        batch.set(doc(db, `users/${user.uid}/signers/${sig.id}`), sig);
+      });
+      try {
+        await batch.commit();
+      } catch (err) {
+        console.error("Failed resetting signers in Firestore:", err);
       }
     }
   };
@@ -700,77 +896,57 @@ export default function App() {
                 <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
                 <span className="text-xs text-slate-400 font-mono">Memeriksa cloud...</span>
               </div>
-            ) : user ? (
-              <div className="flex items-center gap-3">
-                <div className="text-right hidden sm:block">
-                  {isEditingProfile ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={tempProfileName}
-                        onChange={(e) => setTempProfileName(e.target.value)}
-                        className="bg-white/5 text-xs text-slate-200 px-2 py-0.5 rounded border border-white/10 focus:outline-none"
-                      />
-                      <button onClick={saveProfileSettings} className="p-1 hover:bg-white/10 text-indigo-300 rounded">
-                        <Save className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-xs font-semibold text-slate-200 flex items-center gap-1 justify-end">
-                        Halo, {settings.employeeName}!
-                        <button onClick={() => {
-                          setTempProfileName(settings.employeeName);
-                          setTempProfileDept(settings.department);
-                          setIsEditingProfile(true);
-                        }} className="text-[10px] text-slate-400 hover:text-indigo-300 underline cursor-pointer">
-                          edit
-                        </button>
-                      </p>
-                      <p className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 justify-end">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
-                        Cloud Sync Aktif
-                      </p>
-                    </>
-                  )}
-                </div>
-
-                <div className="relative">
-                  {user.photoURL ? (
-                    <img 
-                      src={user.photoURL} 
-                      alt={user.displayName || "User avatar"} 
-                      className="h-9 w-9 rounded-full border border-indigo-500/30 object-cover shadow-sm"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="h-9 w-9 rounded-full bg-indigo-500/10 border border-indigo-400/35 flex items-center justify-center font-bold text-xs text-indigo-300 font-mono shadow-sm">
-                      {settings.employeeName.substring(0, 2).toUpperCase()}
-                    </div>
-                  )}
-                  {/* Embedded mini cloud tag */}
-                  <span className="absolute -bottom-1 -right-1 bg-emerald-500 text-slate-950 p-[2px] rounded-full border border-slate-950 text-[8px]" title="Cloud Synced">
-                    <Check className="w-2.5 h-2.5 text-slate-950" />
-                  </span>
-                </div>
-
-                <button
-                  onClick={handleSignOut}
-                  title="Keluar / Disconnect dari Firebase"
-                  className="p-2 bg-white/5 hover:bg-red-500/10 text-slate-400 hover:text-red-400 border border-white/15 hover:border-red-500/20 rounded-xl transition-all cursor-pointer shadow-sm ml-1"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
             ) : (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
+                {/* Unified profile & signers modal hook button */}
                 <button
-                  onClick={handleSignInGoogle}
-                  className="px-3.5 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-slate-100 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-indigo-500/15"
+                  type="button"
+                  onClick={() => setIsProfileModalOpen(true)}
+                  className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] sm:text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-slate-200 hover:text-white"
+                  title="Atur Nama Lengkap, Nomor Karyawan, dan Daftar Penandatangan Resmi"
                 >
-                  <Cloud className="w-3.5 h-3.5 animate-pulse" />
-                  Hubungkan database IRL
+                  <span>👤 Profil & database TTD</span>
                 </button>
+
+                {user ? (
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      {user.photoURL ? (
+                        <img 
+                          src={user.photoURL} 
+                          alt={user.displayName || "User avatar"} 
+                          className="h-8.5 w-8.5 rounded-full border border-indigo-500/30 object-cover shadow-sm"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="h-8.5 w-8.5 rounded-full bg-indigo-500/10 border border-indigo-400/35 flex items-center justify-center font-bold text-xs text-indigo-300 font-mono shadow-sm">
+                          {settings.employeeName.substring(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <span className="absolute -bottom-0.5 -right-0.5 bg-emerald-500 text-slate-950 p-[2px] rounded-full border border-slate-950 text-[6px]" title="Cloud Synced">
+                        <Check className="w-2 h-2 text-slate-950" />
+                      </span>
+                    </div>
+
+                    <button
+                      onClick={handleSignOut}
+                      title="Keluar / Putuskan Koneksi"
+                      className="p-1.5 bg-white/5 hover:bg-red-500/10 text-slate-400 hover:text-red-400 border border-white/10 hover:border-red-500/20 rounded-xl transition-all cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4 animate-pulse" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleSignInGoogle}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-slate-100 text-[11px] sm:text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-indigo-600/15"
+                    title="Masuk dengan Google untuk sinkronisasi database awan"
+                  >
+                    <Cloud className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Hubungkan Cloud</span>
+                    <span className="inline sm:hidden">Cloud</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -784,7 +960,7 @@ export default function App() {
         <div id="greeting-header" className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 py-2 border-b border-white/5 pb-4">
           <div>
             <h1 className="text-xl font-bold text-slate-100 font-sans tracking-tight animate-fade-in">
-              Selamat datang kembali, {user?.displayName || settings.employeeName}! 👋
+              Selamat datang kembali, {settings.employeeName}! 👋
             </h1>
             <p className="text-xs text-slate-400">
               Kelola rincian gaji, waktu, dan aktivitas lembur Anda dengan praktis dan ringkas.
@@ -964,6 +1140,8 @@ export default function App() {
                 onLogDelete={handleLogDelete}
                 selectedDate={selectedDate}
                 defaultMode="calendar"
+                settings={settings}
+                signers={signers}
               />
             </motion.div>
           ) : (
@@ -1063,6 +1241,18 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* 4. Modal Dialog: Profile & Signers Database Manager */}
+        <ProfileModal
+          isOpen={isProfileModalOpen}
+          onClose={() => setIsProfileModalOpen(false)}
+          settings={settings}
+          onSettingsUpdate={handleSettingsUpdate}
+          signers={signers}
+          onAddSigner={handleAddSigner}
+          onDeleteSigner={handleDeleteSigner}
+          onResetSigners={handleResetSigners}
+        />
 
         {/* Subtle spacing divider at bottom */}
         <div className="pt-4 border-t border-white/5"></div>

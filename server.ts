@@ -119,13 +119,129 @@ Berikan response eksklusif dalam bentuk JSON valid sesuai tipe schema yang diten
     const data = JSON.parse(resultText);
     res.json(data);
   } catch (error: any) {
-    console.error("Gemini Parse Error:", error);
-    res.status(500).json({ 
-      error: "Gagal memproses catatan dengan AI.",
-      details: error.message || "Pastikan format input sesuai atau gunakan pengisian cepat."
-    });
+    console.warn("Gemini Parse failed, using intelligent rule-based backup parser:", error);
+    try {
+      const referenceTime = clientTime || new Date().toISOString();
+      const parsedData = fallbackParse(text, referenceTime);
+      res.json(parsedData);
+    } catch (fallbackError: any) {
+      console.error("Critical parse error:", fallbackError);
+      res.status(500).json({ 
+        error: "Gagal memproses catatan lembur.",
+        details: fallbackError.message
+      });
+    }
   }
 });
+
+// Intelligent rule-based local backup parser for Indonesian text when Gemini is offline
+function fallbackParse(text: string, referenceTime: string) {
+  const cleanText = text.toLowerCase().trim();
+  const refDate = new Date(referenceTime);
+  let resolvedDate = refDate.toISOString().split("T")[0];
+
+  // Parse relative days in Indonesian
+  if (cleanText.includes("kemarin dulu") || cleanText.includes("kemarin lusa")) {
+    const d = new Date(refDate);
+    d.setDate(d.getDate() - 2);
+    resolvedDate = d.toISOString().split("T")[0];
+  } else if (cleanText.includes("kemarin") || cleanText.includes("tadi malam")) {
+    const d = new Date(refDate);
+    d.setDate(d.getDate() - 1);
+    resolvedDate = d.toISOString().split("T")[0];
+  } else if (cleanText.includes("lusa")) {
+    const d = new Date(refDate);
+    d.setDate(d.getDate() + 2);
+    resolvedDate = d.toISOString().split("T")[0];
+  } else if (cleanText.includes("besok")) {
+    const d = new Date(refDate);
+    d.setDate(d.getDate() + 1);
+    resolvedDate = d.toISOString().split("T")[0];
+  } else {
+    // Check days of week
+    const daysIndo = ["minggu", "senin", "selasa", "rabu", "kamis", "jumat", "sabtu"];
+    for (let i = 0; i < 7; i++) {
+      if (cleanText.includes(daysIndo[i] + " lalu")) {
+        const d = new Date(refDate);
+        const currentDay = d.getDay();
+        let diff = currentDay - i;
+        if (diff <= 0) diff += 7;
+        d.setDate(d.getDate() - diff);
+        resolvedDate = d.toISOString().split("T")[0];
+        break;
+      } else if (cleanText.includes(daysIndo[i])) {
+        const d = new Date(refDate);
+        const currentDay = d.getDay();
+        let diff = currentDay - i;
+        if (diff < 0) diff += 7;
+        d.setDate(d.getDate() - diff);
+        resolvedDate = d.toISOString().split("T")[0];
+        break;
+      }
+    }
+  }
+
+  // Parse duration
+  let durationHours = 1.0;
+  // Match things like: 2.5 jam, 3 jam, 1,5 jam, 4 jam, 8.5jam
+  const durationRegex = /(\d+[.,]\d+|\d+)\s*(?:jam|hour)/i;
+  const match = cleanText.match(durationRegex);
+  if (match) {
+    const numStr = match[1].replace(",", ".");
+    const parsedNum = parseFloat(numStr);
+    if (!isNaN(parsedNum)) {
+      durationHours = parsedNum;
+    }
+  }
+
+  // Parse time range: e.g., 18:00 - 21:00, 18.30 s/d 20.30
+  let startTime = "";
+  let endTime = "";
+  const timeRangeRegex = /(\d{1,2})[:.](\d{2})\s*(?:-|sd|s\/d|sampai|ke)\s*(\d{1,2})[:.](\d{2})/i;
+  const timeMatch = cleanText.match(timeRangeRegex);
+  if (timeMatch) {
+    startTime = `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}`;
+    endTime = `${timeMatch[3].padStart(2, "0")}:${timeMatch[4]}`;
+  } else {
+    const singleTimeRegex = /(?:jam|pukul)\s*(\d{1,2})[:.](\d{2})/i;
+    const singleMatch = cleanText.match(singleTimeRegex);
+    if (singleMatch) {
+      startTime = `${singleMatch[1].padStart(2, "0")}:${singleMatch[2]}`;
+    }
+  }
+
+  // Extract a clean description of activity
+  const stopWords = [
+    "tadi", "malam", "kemarin", "lusa", "dulu", "hari", "ini", "besok", "pagi", "sore", "siang",
+    "lembur", "jam", "pukul", "sd", "s/d", "sampai", "ke", "kerja",
+    "senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu", "lalu"
+  ];
+  let words = text.split(/\s+/);
+  words = words.filter(w => {
+    const wClean = w.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return !stopWords.includes(wClean) && !/^\d+$/.test(wClean) && !/^\d+[:.]\d+$/.test(wClean);
+  });
+  
+  let cleanActivity = words.join(" ").trim();
+  if (cleanActivity) {
+    cleanActivity = cleanActivity.charAt(0).toUpperCase() + cleanActivity.slice(1);
+    if (cleanActivity.length > 50) {
+      cleanActivity = cleanActivity.substring(0, 47) + "...";
+    }
+  } else {
+    cleanActivity = "Pekerjaan Lembur Tambahan";
+  }
+
+  return {
+    success: true,
+    date: resolvedDate,
+    startTime: startTime || "17:00",
+    endTime: endTime || "",
+    durationHours,
+    activity: cleanActivity,
+    explanation: "Dianalisis instan dengan algoritma pola kata lokal (AI Backup Active)."
+  };
+}
 
 // Serve frontend build or mount Vite development server
 async function setupServer() {
