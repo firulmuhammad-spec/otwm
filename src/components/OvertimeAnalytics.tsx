@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { TrendingUp, Banknote, Target, Hourglass, Clock, Sparkles, Calendar, Calculator, Percent, ShieldCheck, Trophy, Flame, Zap } from "lucide-react";
+import { TrendingUp, Banknote, Target, Hourglass, Clock, Sparkles, Calendar, Calculator, Percent, ShieldCheck, Trophy, Flame, Zap, User, FileSpreadsheet } from "lucide-react";
 import { OvertimeLog, OvertimeSettings } from "../types";
 import { getDayStatus } from "../utils/holidayHelper";
 
@@ -118,9 +118,10 @@ interface OvertimeAnalyticsProps {
   logs: OvertimeLog[];
   settings: OvertimeSettings;
   onSettingsChange: (settings: OvertimeSettings) => void;
+  onOpenProfile?: () => void;
 }
 
-export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: OvertimeAnalyticsProps) {
+export default function OvertimeAnalytics({ logs, settings, onSettingsChange, onOpenProfile }: OvertimeAnalyticsProps) {
   const [hourlyRateInput, setHourlyRateInput] = useState(settings.hourlyRate);
 
   // States for PPh 21 simulation (Indonesian Tax PP 58/2023)
@@ -192,10 +193,8 @@ export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: 
 
   // Dynamic reference epoch calculation
   const getReferenceDate = () => {
-    if (logs.length === 0) return new Date();
-    const dates = logs.map(l => new Date(l.date + "T00:00:00Z").getTime()).filter(t => !isNaN(t));
-    if (dates.length === 0) return new Date();
-    return new Date(Math.max(...dates));
+    // Default to the actual real-world current date to guarantee the display matches the current running month (e.g. June 2026)
+    return new Date();
   };
 
   const getInitialDatesByPreset = (type: string) => {
@@ -496,6 +495,43 @@ export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: 
     onSettingsChange({ ...settings, monthlyTargetHours: val });
   };
 
+  const handleExportCSV = () => {
+    if (currentMonthLogs.length === 0) {
+      alert("Tidak ada data lembur pada periode yang dipilih untuk diunduh.");
+      return;
+    }
+    
+    const headers = ["No", "Tanggal", "Hari", "Jam Mulai", "Jam Selesai", "Durasi (Jam)", "Kategori Kerja", "Plant", "Sub-Plant", "Aktivitas", "Keterangan/Catatan"];
+    
+    const rows = currentMonthLogs.map((log, index) => {
+      const dateObj = new Date(log.date);
+      const dayName = dateObj.toLocaleDateString("id-ID", { weekday: "long" });
+      return [
+        index + 1,
+        log.date,
+        dayName,
+        log.startTime || "16:00",
+        log.endTime || "--:--",
+        log.durationHours,
+        log.category || "-",
+        log.plant || "-",
+        log.subPlant || "-",
+        `"${(log.activity || "").replace(/"/g, '""')}"`,
+        `"${(log.notes || "").replace(/"/g, '""')}"`
+      ];
+    });
+
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Rekap_Lembur_${startDateStr}_s_d_${endDateStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="overtime-statistics-block">
       
@@ -512,62 +548,74 @@ export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: 
             </p>
           </div>
           
-          <div className="flex flex-wrap gap-1.5 p-1 bg-white/5 rounded-xl border border-white/10">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap gap-1.5 p-1 bg-white/5 rounded-xl border border-white/10">
+              <button
+                type="button"
+                onClick={() => handleFilterTypeChange("current_month")}
+                className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  filterType === "current_month"
+                    ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Bulan Ini
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFilterTypeChange("last_month")}
+                className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  filterType === "last_month"
+                    ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Bulan Lalu
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFilterTypeChange("payroll_period")}
+                className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer pb-1.5 flex items-center gap-1 ${
+                  filterType === "payroll_period"
+                    ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+                title="Tanggal 21 Bulan Lalu s/d Tanggal 20 Bulan Ini"
+              >
+                💼 Siklus Gaji (21 - 20)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFilterTypeChange("last_3_months")}
+                className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  filterType === "last_3_months"
+                    ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                3 Bulan Terakhir
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFilterTypeChange("custom")}
+                className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  filterType === "custom"
+                    ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Kustom
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={() => handleFilterTypeChange("current_month")}
-              className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                filterType === "current_month"
-                  ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
+              onClick={handleExportCSV}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] py-1.5 px-3 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-emerald-500/30 shadow-lg shadow-emerald-500/10"
+              title="Unduh rekap lembur dari rentang tersaring dalam format Excel/CSV"
             >
-              Bulan Ini
-            </button>
-            <button
-              type="button"
-              onClick={() => handleFilterTypeChange("last_month")}
-              className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                filterType === "last_month"
-                  ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              Bulan Lalu
-            </button>
-            <button
-              type="button"
-              onClick={() => handleFilterTypeChange("payroll_period")}
-              className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer pb-1.5 flex items-center gap-1 ${
-                filterType === "payroll_period"
-                  ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-              title="Tanggal 21 Bulan Lalu s/d Tanggal 20 Bulan Ini"
-            >
-              💼 Siklus Gaji (21 - 20)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleFilterTypeChange("last_3_months")}
-              className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                filterType === "last_3_months"
-                  ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              3 Bulan Terakhir
-            </button>
-            <button
-              type="button"
-              onClick={() => handleFilterTypeChange("custom")}
-              className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                filterType === "custom"
-                  ? "bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 font-extrabold"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              Kustom
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Unduh Rekap Excel (CSV)
             </button>
           </div>
         </div>
@@ -602,7 +650,38 @@ export default function OvertimeAnalytics({ logs, settings, onSettingsChange }: 
       </div>
 
       {/* Dynamic Bento Achievement Badges - Longest Overtime & Streaks */}
-      <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in text-left">
+      <div className="md:col-span-2 lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 animate-fade-in text-left">
+        {/* Card E: Profil Karyawan */}
+        <div className="backdrop-blur-xl bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/15 rounded-3xl p-5 shadow-xl transition-all relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/10 blur-2xl rounded-full pointer-events-none group-hover:scale-125 transition-transform"></div>
+          <div className="flex gap-4 items-start relative z-10">
+            <div className="p-3 bg-indigo-500/15 text-indigo-400 rounded-2xl border border-indigo-500/20">
+              <User className="w-5 h-5 text-indigo-400" />
+            </div>
+            <div className="space-y-1 min-w-0 flex-1">
+              <span className="text-[10px] text-indigo-300/80 font-bold uppercase tracking-wider font-mono">Profil Karyawan</span>
+              <p className="text-sm font-bold text-slate-100 truncate mt-0.5" title={settings.employeeName}>
+                {settings.employeeName || "Karyawan"}
+              </p>
+              <p className="text-[10px] text-slate-400 truncate leading-tight">
+                {settings.employeeBadge || "Tanpa No. Reg"}
+              </p>
+              <p className="text-[9px] text-slate-500 truncate leading-tight" title={settings.department}>
+                {settings.department || "Inspeksi Teknik"}
+              </p>
+              {onOpenProfile && (
+                <button
+                  type="button"
+                  onClick={onOpenProfile}
+                  className="mt-2 text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 transition-all cursor-pointer"
+                >
+                  Edit Profil &rarr;
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* Card A: Longest Record */}
         <div className="backdrop-blur-xl bg-orange-500/5 hover:bg-orange-500/10 border border-orange-500/15 rounded-3xl p-5 shadow-xl transition-all relative overflow-hidden group">
           <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/10 blur-2xl rounded-full pointer-events-none group-hover:scale-125 transition-transform"></div>

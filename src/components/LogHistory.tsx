@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Search, Trash2, Calendar, Coffee, AlertCircle, Activity, Layers, Droplet, Gauge, Wrench, Factory, LayoutList, ChevronLeft, ChevronRight, X, Clock, HelpCircle, Package, FileText } from "lucide-react";
 import { OvertimeLog, OvertimeSettings, Signer } from "../types";
 import { getDayStatus } from "../utils/holidayHelper";
@@ -19,6 +19,16 @@ export default function LogHistory({ logs, onLogDelete, selectedDate, defaultMod
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [selectedPopupDate, setSelectedPopupDate] = useState<string | null>(null);
   const [selectedExportLog, setSelectedExportLog] = useState<OvertimeLog | null>(null);
+
+  // Automatically sync calendar month with selectedDate on mount or whenever selectedDate changes
+  useEffect(() => {
+    if (selectedDate) {
+      const parsedDate = new Date(selectedDate);
+      if (!isNaN(parsedDate.getTime())) {
+        setCurrentCalendarDate(parsedDate);
+      }
+    }
+  }, [selectedDate]);
 
   const todayStr = new Date().toISOString().split("T")[0];
 
@@ -241,13 +251,23 @@ export default function LogHistory({ logs, onLogDelete, selectedDate, defaultMod
                       </span>
                     </div>
 
-                    <button
-                      onClick={() => onLogDelete(log.id)}
-                      className="text-slate-400 hover:text-pink-400 p-2 hover:bg-pink-500/10 rounded-xl transition-all cursor-pointer"
-                      title="Hapus data lembur ini"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setSelectedExportLog(log)}
+                        className="bg-indigo-600/25 hover:bg-indigo-600 text-indigo-200 hover:text-white px-2.5 py-1.5 rounded-xl text-[10px] font-bold border border-indigo-500/30 transition-all flex items-center gap-1 cursor-pointer"
+                        title="Unduh Surat Perintah Lembur Resmi (Word / PDF)"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        Unduh SPL
+                      </button>
+                      <button
+                        onClick={() => onLogDelete(log.id)}
+                        className="text-slate-400 hover:text-pink-400 p-2 hover:bg-pink-500/10 rounded-xl transition-all cursor-pointer"
+                        title="Hapus data lembur ini"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                 </div>

@@ -53,14 +53,34 @@ const INITIAL_DEMO_LOGS: OvertimeLog[] = [
 // Helper to robustly check if an error is due to being offline or unavailable
 function checkIsOfflineError(err: any): boolean {
   if (!err) return false;
-  // Convert err to a lowercase string safely
-  const errStr = (
-    err instanceof Error 
-      ? err.message 
-      : typeof err === "object" && err !== null && "error" in err 
-        ? String((err as any).error) 
-        : String(err)
-  ).toLowerCase();
+  
+  // Extract all potential message indicators from the error object to bypass any iframe cross-realm instanceof issues
+  const parts: string[] = [];
+  if (typeof err === "string") {
+    parts.push(err);
+  } else if (typeof err === "object") {
+    if (err.message) parts.push(String(err.message));
+    if (err.error) parts.push(String(err.error));
+    if (err.code) parts.push(String(err.code));
+    if (err.reason) parts.push(String(err.reason));
+    if (err.description) parts.push(String(err.description));
+    try {
+      parts.push(JSON.stringify(err));
+    } catch (e) {
+      // Ignore serialization issues
+    }
+    if (typeof err.toString === "function") {
+      try {
+        parts.push(err.toString());
+      } catch (e) {
+        // Ignore
+      }
+    }
+  } else {
+    parts.push(String(err));
+  }
+
+  const errStr = parts.filter(Boolean).join(" ").toLowerCase();
 
   return (
     errStr.includes("offline") ||
@@ -111,7 +131,10 @@ const DEFAULT_SIGNERS: Signer[] = [
 
 export default function App() {
   const [logs, setLogs] = useState<OvertimeLog[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>("");
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  });
   const [settings, setSettings] = useState<OvertimeSettings>({
     hourlyRate: 50000,
     monthlyTargetHours: 20,
@@ -149,6 +172,7 @@ export default function App() {
   const [isQuickFormOpen, setIsQuickFormOpen] = useState(false);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isLogsExpanded, setIsLogsExpanded] = useState(false);
+  const [showGuide, setShowGuide] = useState(true);
 
   // Load state and listen to configuration and logs on mount
   useEffect(() => {
@@ -199,7 +223,8 @@ export default function App() {
       localStorage.setItem(guestSignersKey, JSON.stringify(DEFAULT_SIGNERS));
     }
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     setSelectedDate(todayStr);
 
     const savedTimer = localStorage.getItem("active_overtime_timer");
@@ -264,19 +289,25 @@ export default function App() {
             localStorage.setItem(userSettingsKey, JSON.stringify(initialUserData));
           }
         } catch (err: any) {
-          const isOfflineErr = checkIsOfflineError(err);
-          if (isOfflineErr) {
-            console.warn("Firestore is offline on startup, falling back to user-specific cached settings:", err);
-            const userCachedSettings = localStorage.getItem(userSettingsKey);
-            if (userCachedSettings) {
-              try {
-                setSettings(JSON.parse(userCachedSettings));
-              } catch (e) {
-                // Ignore parse errors
-              }
+          console.warn("Firestore settings fetch failed/offline on startup, falling back to user-specific cached settings:", err);
+          const userCachedSettings = localStorage.getItem(userSettingsKey);
+          if (userCachedSettings) {
+            try {
+              setSettings(JSON.parse(userCachedSettings));
+            } catch (e) {
+              // Ignore parse errors
             }
           } else {
-            handleFirestoreError(err, OperationType.GET, configPath);
+            // Setup default user settings if no cache exists
+            const defaultGoogleName = currentUser.displayName || currentUser.email?.split("@")[0] || "User";
+            setSettings({
+              hourlyRate: 50000,
+              monthlyTargetHours: 20,
+              employeeName: defaultGoogleName,
+              employeeBadge: "K. 210250",
+              department: "Inspeksi Teknik Rotating & Khusus",
+              overtimeType: "hidup",
+            });
           }
         }
 
@@ -334,25 +365,75 @@ export default function App() {
               snapshot.forEach((docSnap) => {
                 cloudLogs.push(docSnap.data() as OvertimeLog);
               });
+
+              // Check if we have any local or guest logs that are NOT on the server yet (so we don't wipe them out!)
+              const storedUserLogs = localStorage.getItem(userLogsKey);
+              const guestLogs = localStorage.getItem("catat_lembur_logs_guest") || localStorage.getItem("catat_lembur_logs");
+              
+              let localLogsMerged: OvertimeLog[] = [];
+              if (storedUserLogs) {
+                try { localLogsMerged = JSON.parse(storedUserLogs); } catch(e) {}
+              }
+              if (guestLogs) {
+                try {
+                  const parsedGuest = JSON.parse(guestLogs);
+                  parsedGuest.forEach((gLog: OvertimeLog) => {
+                    if (!gLog.id.startsWith("demo-") && !localLogsMerged.some(l => l.id === gLog.id)) {
+                      localLogsMerged.push(gLog);
+                    }
+                  });
+                } catch(e) {}
+              }
+
+              // Filter out demo logs, and find any unsynced logs
+              const unsyncedLogs = localLogsMerged.filter(
+                (localLog) => !localLog.id.startsWith("demo-") && !cloudLogs.some((cloudLog) => cloudLog.id === localLog.id)
+              );
+
+              if (unsyncedLogs.length > 0) {
+                console.log("Syncing unsynced local logs to Firestore:", unsyncedLogs);
+                const batch = writeBatch(db);
+                unsyncedLogs.forEach((log) => {
+                  batch.set(doc(db, `users/${currentUser.uid}/logs/${log.id}`), log);
+                });
+                batch.commit().catch((err) => {
+                  console.warn("Failed to commit unsynced local logs:", err);
+                });
+                
+                // Add unsynced logs to displayed logs until next snapshot fires
+                unsyncedLogs.forEach((log) => {
+                  if (!cloudLogs.some(c => c.id === log.id)) {
+                    cloudLogs.push(log);
+                  }
+                });
+              }
+
               cloudLogs.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
               setLogs(cloudLogs);
               localStorage.setItem(userLogsKey, JSON.stringify(cloudLogs));
             }
           },
           (err: any) => {
-            const isOfflineErr = checkIsOfflineError(err);
-            if (isOfflineErr) {
-              console.warn("Firestore onSnapshot is offline, falling back to local user logs cached:", err);
-              const storedLogsLocal = localStorage.getItem(userLogsKey);
-              if (storedLogsLocal) {
-                try {
-                  setLogs(JSON.parse(storedLogsLocal));
-                } catch (e) {
-                  // Ignore
-                }
+            console.warn("Firestore onSnapshot error, falling back to local user logs cached:", err);
+            const storedLogsLocal = localStorage.getItem(userLogsKey);
+            if (storedLogsLocal) {
+              try {
+                setLogs(JSON.parse(storedLogsLocal));
+              } catch (e) {
+                // Ignore
               }
             } else {
-              handleFirestoreError(err, OperationType.GET, logsPath);
+              const guestLogs = localStorage.getItem("catat_lembur_logs_guest") || localStorage.getItem("catat_lembur_logs");
+              if (guestLogs) {
+                try {
+                  const parsed = JSON.parse(guestLogs).filter((l: OvertimeLog) => !l.id.startsWith("demo-"));
+                  if (parsed.length > 0) {
+                    setLogs(parsed);
+                    return;
+                  }
+                } catch (e) {}
+              }
+              setLogs([]);
             }
           }
         );
@@ -559,8 +640,13 @@ export default function App() {
       const path = `users/${user.uid}/signers/${freshSigner.id}`;
       try {
         await setDoc(doc(db, path), freshSigner);
-      } catch (err) {
-        console.error("Failed adding signer to firestore:", err);
+      } catch (err: any) {
+        const isOfflineErr = checkIsOfflineError(err);
+        if (isOfflineErr) {
+          console.warn("Firestore is offline, adding signer queued in local database cache:", err);
+        } else {
+          handleFirestoreError(err, OperationType.WRITE, path);
+        }
       }
     }
   };
@@ -576,8 +662,13 @@ export default function App() {
       const path = `users/${user.uid}/signers/${id}`;
       try {
         await deleteDoc(doc(db, path));
-      } catch (err) {
-        console.error("Failed deleting signer from firestore:", err);
+      } catch (err: any) {
+        const isOfflineErr = checkIsOfflineError(err);
+        if (isOfflineErr) {
+          console.warn("Firestore is offline, deleting signer queued in local database cache:", err);
+        } else {
+          handleFirestoreError(err, OperationType.DELETE, path);
+        }
       }
     }
   };
@@ -600,8 +691,13 @@ export default function App() {
       });
       try {
         await batch.commit();
-      } catch (err) {
-        console.error("Failed resetting signers in Firestore:", err);
+      } catch (err: any) {
+        const isOfflineErr = checkIsOfflineError(err);
+        if (isOfflineErr) {
+          console.warn("Firestore is offline, resetting signers queued in local cache:", err);
+        } else {
+          handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/signers`);
+        }
       }
     }
   };
@@ -978,6 +1074,58 @@ export default function App() {
           )}
         </div>
 
+        {/* Interactive Quick Help & FAQ Guide Box */}
+        {showGuide && (
+          <div className="bg-slate-900/50 border border-indigo-500/15 rounded-2xl p-4 sm:p-5 shadow-xl relative overflow-hidden transition-all duration-300">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none"></div>
+            <div className="flex justify-between items-start gap-4">
+              <div className="flex gap-3 text-slate-200">
+                <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/15 shrink-0 mt-0.5">
+                  <span className="text-sm">💡</span>
+                </div>
+                <div className="space-y-3">
+                  <h3 className="text-xs sm:text-sm font-bold text-slate-100 flex items-center gap-1.5 font-sans">
+                    Pusat Informasi & Petunjuk Cepat Aplikasi
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5 text-xs text-slate-300 leading-relaxed pt-1">
+                    <div className="space-y-1.5 p-3 bg-white/[0.02] border border-white/5 rounded-xl">
+                      <p className="font-bold text-indigo-400 flex items-center gap-1">
+                        📥 1. Unduh File Lembur (SPL)
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Klik tab <b>"Riwayat & Analitik"</b> di bawah. Pada list aktivitas lembur Anda, klik tombol <b>"Unduh SPL"</b> di log mana pun untuk mengunduh dokumen Word (.doc) atau cetak PDF resmi lengkap dengan rincian TTD supervisor.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5 p-3 bg-white/[0.02] border border-white/5 rounded-xl">
+                      <p className="font-bold text-indigo-400 flex items-center gap-1">
+                        👤 2. Lihat & Atur Profil Anda
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Klik tombol <b>"👤 Profil & database TTD"</b> di pojok kanan atas layar (header). Di sana Anda dapat mengatur Nama, NIK/Badge, Departemen, Tarif per Jam, serta menambah/mengedit daftar Supervisor penandatangan.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5 p-3 bg-white/[0.02] border border-white/5 rounded-xl">
+                      <p className="font-bold text-indigo-400 flex items-center gap-1">
+                        📅 3. Sinkronisasi Kalender
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Kalender default sekarang <b>selalu otomatis mengikuti bulan berjalan</b> saat ini (Juni 2026). Jika Anda menambahkan lembur baru, kalender akan langsung menyelaraskan tampilannya ke bulan lembur yang bersangkutan.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowGuide(false)}
+                className="text-slate-500 hover:text-slate-300 font-mono px-2 py-1 bg-white/5 hover:bg-white/10 rounded-lg cursor-pointer text-[10px] shrink-0 transition-all"
+                title="Sembunyikan Panduan"
+              >
+                Sembunyikan ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Auth Error Toast/Banner */}
         {authError && (
           <div className="bg-red-500/10 border border-red-500/25 text-red-300 text-xs font-medium px-5 py-4 rounded-2xl flex items-start justify-between gap-4 shadow-md whitespace-pre-line leading-relaxed">
@@ -1158,6 +1306,7 @@ export default function App() {
                 logs={logs}
                 settings={settings}
                 onSettingsChange={handleSettingsUpdate}
+                onOpenProfile={() => setIsProfileModalOpen(true)}
               />
             </motion.div>
           )}
@@ -1237,6 +1386,8 @@ export default function App() {
                 onSelectDay={setSelectedDate}
                 selectedDate={selectedDate}
                 onCloseForm={() => setIsQuickFormOpen(false)}
+                settings={settings}
+                signers={signers}
               />
             </div>
           </div>

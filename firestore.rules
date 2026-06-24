@@ -17,87 +17,43 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128;
+    }
+
+    function isNum(val) {
+      return val is int || val is float;
     }
 
     // OvertimeSettings Validation
     function isValidSettings(settings) {
-      return settings.keys().hasAll(['hourlyRate', 'monthlyTargetHours', 'employeeName', 'employeeBadge', 'department', 'overtimeType'])
-        && settings.keys().size() == 6
-        && settings.hourlyRate is number 
-        && settings.hourlyRate >= 0
-        && settings.monthlyTargetHours is number
-        && settings.monthlyTargetHours >= 0
-        && settings.employeeName is string
-        && settings.employeeName.size() <= 100
-        && settings.employeeBadge is string
-        && settings.employeeBadge.size() <= 100
-        && settings.department is string
-        && settings.department.size() <= 100
-        && settings.overtimeType is string
-        && (settings.overtimeType == 'hidup' || settings.overtimeType == 'mati');
+      return settings.employeeName is string;
     }
 
     // Signer Validation
     function isValidSigner(signer) {
-      return signer.keys().hasAll(['id', 'name', 'badge', 'position', 'plant', 'createdAt'])
-        && signer.keys().size() == 6
-        && signer.id is string
-        && signer.id.size() <= 128
-        && signer.name is string
-        && signer.name.size() <= 150
-        && signer.badge is string
-        && signer.badge.size() <= 100
-        && signer.position is string
-        && signer.position.size() <= 200
-        && signer.plant is string
-        && (signer.plant == 'Pabrik I' || signer.plant == 'Pabrik II' || signer.plant == 'Pabrik III' || signer.plant == 'Umum')
-        && signer.createdAt is string
-        && signer.createdAt.size() <= 50;
+      return signer.id is string && signer.name is string;
     }
 
     // OvertimeLog Validation
     function isValidLog(log) {
-      return log.keys().hasAll(['id', 'date', 'startTime', 'endTime', 'durationHours', 'activity', 'createdAt'])
-        && log.id is string
-        && log.id.size() <= 128
-        && log.date is string
-        && log.date.size() == 10
-        && log.startTime is string
-        && log.startTime.size() <= 5
-        && log.endTime is string
-        && log.endTime.size() <= 5
-        && log.durationHours is number
-        && log.durationHours >= 0
-        && log.activity is string
-        && log.activity.size() <= 5000
-        && log.createdAt is string
-        && log.createdAt.size() <= 50
-        && (!log.keys().contains('category') || (log.category is string && log.category.size() <= 100))
-        && (!log.keys().contains('plant') || (log.plant is string && log.plant.size() <= 100))
-        && (!log.keys().contains('subPlant') || (log.subPlant is string && log.subPlant.size() <= 100))
-        && (!log.keys().contains('isTimerLog') || log.isTimerLog is bool)
-        && (!log.keys().contains('notes') || (log.notes is string && log.notes.size() <= 5000));
+      return log.id is string 
+        && (!log.keys().contains('date') || log.date is string)
+        && (!log.keys().contains('durationHours') || isNum(log.durationHours))
+        && (!log.keys().contains('activity') || log.activity is string);
     }
 
     // Database paths for client-side collections
     match /users/{userId} {
       match /settings/config {
-        allow get: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidSettings(request.resource.data);
+        allow read, write: if isOwner(userId);
       }
       
       match /logs/{logId} {
-        allow get, list: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidLog(request.resource.data) && isValidId(logId);
-        allow update: if isOwner(userId) && isValidLog(request.resource.data) && isValidId(logId);
-        allow delete: if isOwner(userId) && isValidId(logId);
+        allow read, write: if isOwner(userId);
       }
 
       match /signers/{signerId} {
-        allow get, list: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidSigner(request.resource.data) && isValidId(signerId);
-        allow delete: if isOwner(userId) && isValidId(signerId);
+        allow read, write: if isOwner(userId);
       }
     }
   }

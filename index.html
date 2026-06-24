@@ -26,12 +26,36 @@
 
     <!-- PWA Service Worker Registration -->
     <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('Service Worker registered successfully:', reg.scope))
-            .catch(err => console.error('Service Worker registration failed:', err));
-        });
+      try {
+        const isDevEnv = window.location.hostname === 'localhost' || window.location.hostname.includes('run.app');
+        if ('serviceWorker' in navigator) {
+          if (isDevEnv) {
+            // Unregister any active service worker during development/preview to prevent stale bundle caches
+            navigator.serviceWorker.getRegistrations().then((registrations) => {
+              for (let registration of registrations) {
+                registration.unregister().then((success) => {
+                  if (success) console.log('Dev Service Worker unregistered successfully.');
+                }).catch(() => {});
+              }
+            }).catch(() => {});
+            // Clear caches as well to ensure latest scripts are loaded
+            if (window.caches) {
+              caches.keys().then((names) => {
+                for (let name of names) {
+                  caches.delete(name).catch(() => {});
+                }
+              }).catch(() => {});
+            }
+          } else {
+            window.addEventListener('load', () => {
+              navigator.serviceWorker.register('/sw.js')
+                .then(reg => console.log('Service Worker registered successfully:', reg.scope))
+                .catch(err => console.error('Service Worker registration failed:', err));
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('PWA initialization skipped due to environment limits:', e);
       }
     </script>
   </body>

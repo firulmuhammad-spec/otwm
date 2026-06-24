@@ -254,11 +254,31 @@ async function setupServer() {
     console.log("Vite development middleware mounted.");
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    
+    // Serve static files with proper Cache-Control headers to prevent stale mobile caching
+    app.use(express.static(distPath, {
+      etag: true,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) {
+          // Force index.html to never be cached so users always get the latest bundle references
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+        } else {
+          // Cache JS/CSS/assets for a short time but require revalidation (stale-while-revalidate pattern)
+          res.setHeader("Cache-Control", "public, max-age=0, must-revalidate");
+        }
+      }
+    }));
+
     app.get("*", (req, res) => {
+      // Set headers for fallback route too
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.sendFile(path.join(distPath, "index.html"));
     });
-    console.log("Production static build serving active.");
+    console.log("Production static build serving active with Cache-Control headers.");
   }
 
   app.listen(PORT, "0.0.0.0", () => {

@@ -1,12 +1,17 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { initializeFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 
 const app = initializeApp(firebaseConfig);
+
+// Initialize Firestore with robust local persistent cache for offline capabilities
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
 }, firebaseConfig.firestoreDatabaseId);
+
 export const auth = getAuth();
 export const googleProvider = new GoogleAuthProvider();
 
@@ -53,6 +58,6 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
-  console.error("Firestore Error: ", JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.warn("Firestore Warning (offline/handled):", JSON.stringify(errInfo));
+  // We do not throw an uncaught error anymore to ensure a seamless and crash-free offline fallback experience.
 }

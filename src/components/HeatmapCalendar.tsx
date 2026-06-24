@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Calendar, Plus, Award, ChevronLeft, ChevronRight, Check, Clock, Sparkles } from "lucide-react";
-import { OvertimeLog } from "../types";
+import { Calendar, Plus, Award, ChevronLeft, ChevronRight, Check, Clock, Sparkles, FileText } from "lucide-react";
+import { OvertimeLog, OvertimeSettings, Signer } from "../types";
 import { getDayStatus, getSuggestedStartTime } from "../utils/holidayHelper";
+import SPLExportModal from "./SPLExportModal";
 
 interface HeatmapCalendarProps {
   logs: OvertimeLog[];
@@ -11,6 +12,8 @@ interface HeatmapCalendarProps {
   showGridOnly?: boolean;
   showFormOnly?: boolean;
   onCloseForm?: () => void;
+  settings: OvertimeSettings;
+  signers: Signer[];
 }
 
 export const PLANTS_DATA: Record<string, string[]> = {
@@ -70,7 +73,9 @@ export default function HeatmapCalendar({
   selectedDate,
   showGridOnly = false,
   showFormOnly = false,
-  onCloseForm
+  onCloseForm,
+  settings,
+  signers
 }: HeatmapCalendarProps) {
   const [currentDate, setCurrentDate] = useState(new Date()); // Dynamic current date for current running month default
   const [quickHours, setQuickHours] = useState<number>(2); // 1 to 12 whole hours
@@ -81,12 +86,18 @@ export default function HeatmapCalendar({
   const [notes, setNotes] = useState<string>("");
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [startTime, setStartTime] = useState<string>("16:00");
+  const [selectedExportLog, setSelectedExportLog] = useState<OvertimeLog | null>(null);
 
   // Automatically adapt default start times when clicked date changes
   useEffect(() => {
     if (selectedDate) {
       const suggest = getSuggestedStartTime(selectedDate);
       setStartTime(suggest.startTime);
+      
+      const parsedDate = new Date(selectedDate);
+      if (!isNaN(parsedDate.getTime())) {
+        setCurrentDate(parsedDate);
+      }
     }
   }, [selectedDate]);
 
@@ -664,12 +675,58 @@ export default function HeatmapCalendar({
             Simpan Catatan Lembur Hari Ini
           </button>
         )}
+
+        {/* Existing logs on this date for download SPL */}
+        {(() => {
+          const dayLogs = logs.filter((l) => l.date === selectedDate);
+          if (dayLogs.length === 0) return null;
+          return (
+            <div className="space-y-2 pt-3 border-t border-white/10 text-left">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block font-sans">
+                📋 Catatan Lembur Tanggal Ini ({dayLogs.length}):
+              </span>
+              <div className="space-y-2 max-h-[180px] overflow-y-auto custom-scroll pr-1">
+                {dayLogs.map((log) => (
+                  <div key={log.id} className="bg-white/5 border border-white/5 hover:border-white/10 p-3 rounded-2xl flex flex-col gap-2 transition-all">
+                    <div className="flex justify-between items-center gap-2">
+                      <div className="min-w-0">
+                        <span className="text-[11px] font-bold text-slate-200 block truncate">{log.activity}</span>
+                        <span className="text-[9px] text-slate-400 font-mono block">
+                          Pukul {log.startTime || "16:00"}{log.endTime ? ` - ${log.endTime}` : ""} ({log.durationHours} Jam)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedExportLog(log)}
+                        className="shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1.5 rounded-xl text-[10px] font-bold border border-indigo-500/30 transition-all flex items-center gap-1 cursor-pointer"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        Unduh SPL
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   };
 
   if (showFormOnly) {
-    return renderForm();
+    return (
+      <>
+        {renderForm()}
+        <SPLExportModal
+          isOpen={selectedExportLog !== null}
+          onClose={() => setSelectedExportLog(null)}
+          log={selectedExportLog}
+          settings={settings}
+          signers={signers}
+        />
+      </>
+    );
   }
 
   if (showGridOnly) {
@@ -681,17 +738,27 @@ export default function HeatmapCalendar({
   }
 
   return (
-    <div id="calendar-heatmap-card" className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-3xl p-6 shadow-xl relative overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-6">
-      
-      {/* Heatmap visualization Grid */}
-      <div className="lg:col-span-7 flex flex-col justify-between space-y-4">
-        {renderCalendarGrid()}
+    <>
+      <div id="calendar-heatmap-card" className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-3xl p-6 shadow-xl relative overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Heatmap visualization Grid */}
+        <div className="lg:col-span-7 flex flex-col justify-between space-y-4">
+          {renderCalendarGrid()}
+        </div>
+
+        {/* Quick Add Form on Selected Cell */}
+        <div className="lg:col-span-12 xl:col-span-5 bg-gradient-to-b from-slate-900/60 to-slate-950/60 p-6 rounded-3xl border border-white/10 flex flex-col justify-between space-y-5 shadow-2xl relative">
+          {renderForm()}
+        </div>
       </div>
 
-      {/* Quick Add Form on Selected Cell */}
-      <div className="lg:col-span-12 xl:col-span-5 bg-gradient-to-b from-slate-900/60 to-slate-950/60 p-6 rounded-3xl border border-white/10 flex flex-col justify-between space-y-5 shadow-2xl relative">
-        {renderForm()}
-      </div>
-    </div>
+      <SPLExportModal
+        isOpen={selectedExportLog !== null}
+        onClose={() => setSelectedExportLog(null)}
+        log={selectedExportLog}
+        settings={settings}
+        signers={signers}
+      />
+    </>
   );
 }
